@@ -1,0 +1,32 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <Nullable>enable</Nullable>
+    <LangVersion>Latest</LangVersion>
+    <OutputType>Exe</OutputType>
+    <PlatformTarget>x64</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+    <AssemblyVersion>0.4.0</AssemblyVersion>
+    <BaseOutputPath>.\bin</BaseOutputPath>
+    <!-- TIA Portal version and install folder; override with: dotnet build -p:TiaVersion=19 -->
+    <TiaVersion Condition="'$(TiaVersion)' == ''">20</TiaVersion>
+    <TiaPortalDir Condition="'$(TiaPortalDir)' == ''">C:\Program Files\Siemens\Automation\Portal V$(TiaVersion)</TiaPortalDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.10" />
+    <PackageReference Include="ModelContextProtocol" Version="2.2.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <Reference Include="Siemens.Engineering">
+      <HintPath>$(TiaPortalDir)\PublicAPI\V$(TiaVersion)\Siemens.Engineering.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="System.Management">
+      <HintPath>C:\Program Files (x86)\Reference Assemblies\Microsoft\Framework\.NETFramework\v4.8\System.Management.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Remove="tests\**" />
+    <None Include="tests\**" />
+  </ItemGroup>
+</Project>

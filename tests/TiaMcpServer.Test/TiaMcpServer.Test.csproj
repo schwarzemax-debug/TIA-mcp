@@ -1,0 +1,33 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+	  <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+	<PlatformTarget>x64</PlatformTarget>
+	<Prefer32Bit>false</Prefer32Bit>
+	<Nullable>enable</Nullable>
+	<BaseOutputPath>.\bin</BaseOutputPath>
+    <!-- TIA Portal version and install folder; override with: dotnet build -p:TiaVersion=19 -->
+    <TiaVersion Condition="'$(TiaVersion)' == ''">20</TiaVersion>
+    <TiaPortalDir Condition="'$(TiaPortalDir)' == ''">C:\Program Files\Siemens\Automation\Portal V$(TiaVersion)</TiaPortalDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="Test22Session.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="MSTest" Version="3.9.2" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\TiaMcpServer\TiaMcpServer.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Formerly pulled in transitively by the Siemens.Collaboration.Net packages (removed from the server). -->
+    <Reference Include="Siemens.Engineering">
+      <HintPath>$(TiaPortalDir)\PublicAPI\V$(TiaVersion)\Siemens.Engineering.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+  <ItemGroup>
+    <Using Include="Microsoft.VisualStudio.TestTools.UnitTesting" />
+  </ItemGroup>
+</Project>

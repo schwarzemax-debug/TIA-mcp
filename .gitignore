@@ -1,0 +1,16 @@
+.vs/
+export/
+.gemini/
+.claude/
+.github/
+# Build output
+bin/
+obj/
+TestResults/
+*.user
+*.suo
+
+# Local MCP config / exports
+/export/
+/Project/
+mcp.local.json

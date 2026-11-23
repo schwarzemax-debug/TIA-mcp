@@ -1,0 +1,679 @@
+using Siemens.Engineering.SW.Blocks;
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using TiaMcpServer.Siemens;
+
+namespace TiaMcpServer.Test
+{
+    /// <summary>
+    /// Tests for the export format settings in 'tia.json' and the decisions ExportPlcProgram
+    /// takes from them. These tests do not connect to TIA Portal and do not open a project.
+    /// </summary>
+    [TestClass]
+    [DoNotParallelize]
+    public class Test10ExportFormats
+    {
+        private const string SimaticSd = "SIMATIC SD(.s7dcl, .s7res)";
+
+        private string _directory = string.Empty;
+
+        [TestInitialize]
+        public void ClassInit()
+        {
+            Engineering.TiaMajorVersion = Settings.TiaMajorVersion;
+            Openness.Initialize(Engineering.TiaMajorVersion);
+
+            _directory = Path.Combine(Path.GetTempPath(), "TiaMcpServer.Test10." + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(_directory);
+        }
+
+        [TestCleanup]
+        public void Cleanup()
+        {
+            if (Directory.Exists(_directory))
+            {
+                Directory.Delete(_directory, recursive: true);
+            }
+        }
+
+        private static ExportFormatSettings SettingsOf(params (string Key, string Value)[] entries)
+        {
+            var body = string.Join(", ", entries.Select(e => $"\"{e.Key}\": \"{e.Value}\""));
+
+            return ExportFormatSettings.Parse($"{{ \"version-control-interface\": {{ {body} }} }}", "test.json");
+        }
+
+        private static PortalException Throws(Action action)
+        {
+            try
+            {
+                action();
+            }
+            catch (PortalException ex)
+            {
+                return ex;
+            }
+
+            Assert.Fail("a PortalException was expected");
+
+            return null!;
+        }
+
+        [DataTestMethod]
+        [DataRow("SIMATIC SD(.s7dcl, .s7res)", ExportFormatKind.SimaticSd)]
+        [DataRow("simatic sd (.s7dcl, .s7res)", ExportFormatKind.SimaticSd)]
+        [DataRow(".xml", ExportFormatKind.Xml)]
+        [DataRow(".awl", ExportFormatKind.Source)]
+        [DataRow(".scl", ExportFormatKind.Source)]
+        [DataRow(".db", ExportFormatKind.Source)]
+        [DataRow(".udt", ExportFormatKind.Source)]
+        [DataRow("SIMATIC SD(.yml, .js)", ExportFormatKind.SimaticSd)]
+        [DataRow(".txt", ExportFormatKind.Unknown)]
+        [DataRow("", ExportFormatKind.Unknown)]
+        public void Test_1000_ParseKind_ReadsTheTextTiaPortalShows(string value, ExportFormatKind expected)
+        {
+            Assert.AreEqual(expected, ExportFormats.ParseKind(value));
+        }
+
+        [TestMethod]
+        public void Test_1001_ParseKind_NullIsUnknown()
+        {
+            Assert.AreEqual(ExportFormatKind.Unknown, ExportFormats.ParseKind(null));
+        }
+
+        [TestMethod]
+        public void Test_1010_BlockKey_FollowsTheLanguageAndDataBlocks()
+        {
+            Assert.AreEqual("code-blocks-LAD", ExportFormats.BlockKey(false, ProgrammingLanguage.LAD));
+            Assert.AreEqual("code-blocks-LAD", ExportFormats.BlockKey(false, ProgrammingLanguage.F_LAD), "a failsafe LAD block follows the LAD setting");
+            Assert.AreEqual("code-blocks-FBD", ExportFormats.BlockKey(false, ProgrammingLanguage.FBD));
+            Assert.AreEqual("code-blocks-SCL", ExportFormats.BlockKey(false, ProgrammingLanguage.SCL));
+            Assert.AreEqual("code-blocks-STL", ExportFormats.BlockKey(false, ProgrammingLanguage.STL));
+            Assert.AreEqual("code-blocks-GRAPH", ExportFormats.BlockKey(false, ProgrammingLanguage.GRAPH));
+            Assert.AreEqual("data-blocks", ExportFormats.BlockKey(true, ProgrammingLanguage.LAD), "a data block is matched by type, not by language");
+            Assert.IsNull(ExportFormats.BlockKey(false, (ProgrammingLanguage)(-1)));
+        }
+
+        [TestMethod]
+        public void Test_1020_RecommendedTool_NamesTheToolThatWritesTheFormat()
+        {
+            // The format comes from tia.json, so one tool per object kind writes every format
+            Assert.AreEqual("ExportBlock", ExportFormats.RecommendedTool("code-blocks-LAD", ExportFormatKind.SimaticSd));
+            Assert.AreEqual("ExportBlock", ExportFormats.RecommendedTool("code-blocks-FBD", ExportFormatKind.Xml));
+            Assert.AreEqual("ExportBlock", ExportFormats.RecommendedTool("code-blocks-STL", ExportFormatKind.Source));
+            Assert.AreEqual("ExportBlock", ExportFormats.RecommendedTool("data-blocks", ExportFormatKind.Source));
+            Assert.AreEqual("ExportType", ExportFormats.RecommendedTool("plc-data-types", ExportFormatKind.SimaticSd));
+            Assert.AreEqual("ExportType", ExportFormats.RecommendedTool("plc-data-types", ExportFormatKind.Xml));
+            Assert.AreEqual("ExportType", ExportFormats.RecommendedTool("plc-data-types", ExportFormatKind.Source));
+            Assert.IsNull(ExportFormats.RecommendedTool("PLC tag tables", ExportFormatKind.Xml), "an object type without an export tool for it");
+            Assert.IsNull(ExportFormats.RecommendedTool("code-blocks-LAD", ExportFormatKind.Unknown));
+        }
+
+        [TestMethod]
+        public void Test_1030_Parse_ReadsStringValuesAndIgnoresTheRest()
+        {
+            // Arrange
+            var json = "{ \"Version-Control-Interface\": { \"code-blocks-LAD\": \"" + SimaticSd + "\", \"count\": 3 }, \"other\": {} }";
+
+            // Act
+            var settings = ExportFormatSettings.Parse(json, "test.json");
+
+            // Assert
+            Assert.AreEqual(SimaticSd, settings.Get("CODE-BLOCKS-lad"), "the group and the keys are matched without regard to case");
+            Assert.IsNull(settings.Get("count"));
+            Assert.AreEqual(1, settings.Values.Count);
+        }
+
+        [TestMethod]
+        public void Test_1032_Parse_IgnoresTheArgsSectionForOtherPrograms()
+        {
+            // Arrange
+            var json = "{ \"args\": { \"project-path\": \"P.ap21\", \"software-path\": \"PLC_1\", \"export-path\": \"export\" }, " +
+                       "\"version-control-interface\": { \"code-blocks-STL\": \".awl\" } }";
+
+            // Act
+            var settings = ExportFormatSettings.Parse(json, "test.json");
+
+            // Assert
+            Assert.AreEqual(".awl", settings.Get("code-blocks-STL"));
+            Assert.IsNull(settings.Get("project-path"));
+            Assert.AreEqual(1, settings.Values.Count);
+        }
+
+        [TestMethod]
+        public void Test_1031_Parse_RejectsBrokenJsonAndAMissingGroup()
+        {
+            var broken = Throws(() => ExportFormatSettings.Parse("{ not json", "broken.json"));
+            var noGroup = Throws(() => ExportFormatSettings.Parse("{ \"other\": {} }", "nogroup.json"));
+
+            Assert.AreEqual(PortalErrorCode.InvalidParams, broken.Code);
+            StringAssert.Contains(broken.Message, "broken.json");
+            Assert.AreEqual(PortalErrorCode.InvalidParams, noGroup.Code);
+            StringAssert.Contains(noGroup.Message, "version-control-interface");
+        }
+
+        private static Dictionary<string, string> InitArgs(string project = "", string software = "", string export = "") =>
+            new Dictionary<string, string>
+            {
+                [ExportFormats.ArgsProjectPathKey] = project,
+                [ExportFormats.ArgsSoftwarePathKey] = software,
+                [ExportFormats.ArgsExportPathKey] = export
+            };
+
+        private string TiaJson => Path.Combine(_directory, ExportFormats.SettingsFileName);
+
+        [TestMethod]
+        public void Test_1080_Init_CreatesTheFileWithTheArgsFirstAndTheFormatDefaults()
+        {
+            // Arrange / Act
+            var result = ExportFormatSettings.Init(_directory, InitArgs("Demo.ap21", "PLC_1", "export"));
+
+            // Assert
+            var text = File.ReadAllText(TiaJson);
+
+            Assert.IsTrue(result.Created);
+            Assert.IsTrue(result.Changed);
+            CollectionAssert.AreEqual(new[] { "project-path", "software-path", "export-path" }, result.AddedArgs);
+            Assert.AreEqual(ExportFormats.Defaults.Count, result.AddedFormats.Count);
+            Assert.IsTrue(text.IndexOf("\"args\"", StringComparison.Ordinal) < text.IndexOf("\"version-control-interface\"", StringComparison.Ordinal),
+                "args come first in a new file");
+            Assert.AreEqual(".awl", ExportFormatSettings.Load(_directory).Get("code-blocks-STL"), "the server reads what init wrote");
+        }
+
+        [TestMethod]
+        public void Test_1086_Init_WritesKeepStructureOnlyWhenItIsSet()
+        {
+            // Arrange
+            var withFlag = InitArgs("", "", "export");
+            withFlag[ExportFormats.ArgsKeepStructureKey] = "true";
+            withFlag[ExportFormats.ArgsWithUserInterfaceKey] = "true";
+
+            // Act
+            var result = ExportFormatSettings.Init(_directory, withFlag);
+            var text = File.ReadAllText(TiaJson);
+
+            // Assert
+            CollectionAssert.AreEqual(new[] { "export-path", "keep-structure", "with-ui" }, result.AddedArgs);
+            StringAssert.Contains(text, "\"keep-structure\": \"true\"");
+            Assert.IsFalse(text.Contains("preserve-path"), "a new file never gets the deprecated key");
+            StringAssert.Contains(text, "\"with-ui\": \"true\"");
+        }
+
+        [TestMethod]
+        public void Test_1087_Init_RenamesTheDeprecatedPreservePathKeyInPlaceAndKeepsItsValue()
+        {
+            // Arrange
+            File.WriteAllText(
+                TiaJson,
+                "{ \"args\": { \"project\": \"Mine.ap20\", \"preserve-path\": \"true\" }, \"other\": { \"a\": 1 } }");
+
+            // Act
+            var result = ExportFormatSettings.Init(_directory, InitArgs());
+            var text = File.ReadAllText(TiaJson);
+
+            // Assert
+            // 'project' is the deprecated name of 'project-path' and is renamed the same way
+            Assert.IsTrue(result.Changed, "a rename is a change, so the file is written");
+            CollectionAssert.AreEqual(new[] { "project -> project-path", "preserve-path -> keep-structure" }, result.RenamedArgs);
+            StringAssert.Contains(text, "\"keep-structure\": \"true\"");
+            Assert.IsFalse(text.Contains("preserve-path"), "the old key is gone");
+            StringAssert.Contains(text, "\"project-path\": \"Mine.ap20\"");
+            StringAssert.Contains(text, "\"other\"");
+        }
+
+        [TestMethod]
+        public void Test_1087a_Init_RenamesTheDeprecatedProjectKeyInPlaceAndKeepsItsValue()
+        {
+            // Arrange
+            File.WriteAllText(TiaJson, "{ \"args\": { \"project\": \"Mine.ap20\" } }");
+
+            // Act
+            var result = ExportFormatSettings.Init(_directory, InitArgs());
+            var text = File.ReadAllText(TiaJson);
+
+            // Assert
+            CollectionAssert.AreEqual(new[] { "project -> project-path" }, result.RenamedArgs);
+            StringAssert.Contains(text, "\"project-path\": \"Mine.ap20\"");
+            Assert.IsFalse(text.Contains("\"project\""), "the old key is gone");
+        }
+
+        [TestMethod]
+        public void Test_1087b_Init_RenamesTheDeprecatedWithUserInterfaceKeyInPlaceAndKeepsItsValue()
+        {
+            // Arrange
+            File.WriteAllText(TiaJson, "{ \"args\": { \"with-user-interface\": \"true\" } }");
+
+            // Act
+            var result = ExportFormatSettings.Init(_directory, InitArgs());
+            var text = File.ReadAllText(TiaJson);
+
+            // Assert
+            CollectionAssert.AreEqual(new[] { "with-user-interface -> with-ui" }, result.RenamedArgs);
+            StringAssert.Contains(text, "\"with-ui\": \"true\"");
+            Assert.IsFalse(text.Contains("with-user-interface"), "the old key is gone");
+        }
+
+        [TestMethod]
+        public void Test_1088_Init_RenamedKeyIsNotAddedAgainWhenKeepStructureIsGiven()
+        {
+            // Arrange
+            File.WriteAllText(TiaJson, "{ \"args\": { \"preserve-path\": \"true\" } }");
+            var args = InitArgs();
+            args[ExportFormats.ArgsKeepStructureKey] = "true";
+
+            // Act
+            var result = ExportFormatSettings.Init(_directory, args);
+
+            // Assert
+            CollectionAssert.AreEqual(new[] { "preserve-path -> keep-structure" }, result.RenamedArgs);
+            Assert.AreEqual(0, result.AddedArgs.Count, "the renamed key already holds the value");
+            Assert.AreEqual(0, result.KeptArgs.Count);
+        }
+
+        [TestMethod]
+        public void Test_1089_Init_BothKeysPresent_LeavesBothAndReportsTheOldOneAsKept()
+        {
+            // Arrange
+            File.WriteAllText(TiaJson, "{ \"args\": { \"preserve-path\": \"true\", \"keep-structure\": \"true\" } }");
+
+            // Act
+            var result = ExportFormatSettings.Init(_directory, InitArgs());
+            var text = File.ReadAllText(TiaJson);
+
+            // Assert
+            Assert.AreEqual(0, result.RenamedArgs.Count);
+            CollectionAssert.AreEqual(new[] { "preserve-path" }, result.KeptArgs);
+            StringAssert.Contains(text, "\"preserve-path\": \"true\"");
+            StringAssert.Contains(text, "\"keep-structure\": \"true\"");
+        }
+
+        [TestMethod]
+        public void Test_1081_Init_LeavesOutBlankArgsAndTheWholeSectionWhenAllAreBlank()
+        {
+            // Arrange / Act
+            var onlyExport = ExportFormatSettings.Init(_directory, InitArgs(export: "export"));
+            var none = ExportFormatSettings.Init(Path.Combine(_directory, "none"), InitArgs());
+
+            // Assert
+            CollectionAssert.AreEqual(new[] { "export-path" }, onlyExport.AddedArgs);
+            Assert.IsFalse(File.ReadAllText(none.File).Contains("\"args\""));
+        }
+
+        [TestMethod]
+        public void Test_1082_Init_MergesAnExistingFileAndKeepsEveryExistingValue()
+        {
+            // Arrange
+            File.WriteAllText(
+                TiaJson,
+                "{ \"args\": { \"project-path\": \"Mine.ap20\" }, " +
+                "\"version-control-interface\": { \"code-blocks-STL\": \".xml\" }, \"other\": { \"a\": 1 } }");
+
+            // Act
+            var result = ExportFormatSettings.Init(_directory, InitArgs("New.ap21", "PLC_1"));
+
+            // Assert
+            var text = File.ReadAllText(TiaJson);
+
+            Assert.IsFalse(result.Created);
+            Assert.IsTrue(result.Changed);
+            CollectionAssert.AreEqual(new[] { "software-path" }, result.AddedArgs);
+            CollectionAssert.AreEqual(new[] { "project-path" }, result.KeptArgs);
+            Assert.AreEqual(ExportFormats.Defaults.Count - 1, result.AddedFormats.Count);
+            Assert.AreEqual(".xml", ExportFormatSettings.Load(_directory).Get("code-blocks-STL"));
+            Assert.AreEqual(".xml", ExportFormatSettings.Load(_directory).Get("code-blocks-GRAPH"), "init adds the GRAPH setting to a file that lacks it");
+            StringAssert.Contains(text, "Mine.ap20");
+            Assert.IsFalse(text.Contains("New.ap21"), "an existing value is never replaced");
+            StringAssert.Contains(text, "\"other\"");
+        }
+
+        [TestMethod]
+        public void Test_1083_Init_SecondCallChangesNothingAndDoesNotRewriteTheFile()
+        {
+            // Arrange
+            ExportFormatSettings.Init(_directory, InitArgs("Demo.ap21", "PLC_1", "export"));
+            var before = File.ReadAllText(TiaJson);
+
+            // Act
+            var second = ExportFormatSettings.Init(_directory, InitArgs("Demo.ap21", "PLC_1", "export"));
+
+            // Assert
+            Assert.IsFalse(second.Changed);
+            Assert.AreEqual(0, second.AddedArgs.Count + second.AddedFormats.Count + second.KeptArgs.Count);
+            Assert.AreEqual(before, File.ReadAllText(TiaJson));
+        }
+
+        [TestMethod]
+        [DataRow("{ not json")]
+        [DataRow("[1, 2]")]
+        public void Test_1084_Init_RejectsAFileThatIsNotAJsonObjectAndLeavesItUntouched(string content)
+        {
+            // Arrange
+            File.WriteAllText(TiaJson, content);
+
+            // Act
+            var ex = Throws(() => ExportFormatSettings.Init(_directory, InitArgs(export: "export")));
+
+            // Assert
+            Assert.AreEqual(PortalErrorCode.InvalidParams, ex.Code);
+            StringAssert.Contains(ex.Message, "tia.json");
+            Assert.AreEqual(content, File.ReadAllText(TiaJson));
+        }
+
+        [TestMethod]
+        public void Test_1085_Init_AddsTheFormatGroupToAnEmptyObject()
+        {
+            // Arrange
+            File.WriteAllText(TiaJson, "{}");
+
+            // Act
+            var result = ExportFormatSettings.Init(_directory, InitArgs());
+
+            // Assert
+            Assert.IsFalse(result.Created);
+            Assert.AreEqual(ExportFormats.Defaults.Count, result.AddedFormats.Count);
+            Assert.AreEqual(SimaticSd, ExportFormatSettings.Load(_directory).Get("code-blocks-LAD"));
+        }
+
+        [TestMethod]
+        public void Test_1040_Load_ReadsTheFileAtTheExportRoot()
+        {
+            // Arrange
+            File.WriteAllText(
+                Path.Combine(_directory, ExportFormats.SettingsFileName),
+                "{ \"version-control-interface\": { \"code-blocks-STL\": \".awl\" } }");
+
+            // Act
+            var settings = ExportFormatSettings.Load(_directory);
+
+            // Assert
+            Assert.AreEqual(".awl", settings.Get("code-blocks-STL"));
+            Assert.AreEqual(Path.Combine(_directory, ExportFormats.SettingsFileName), settings.File);
+        }
+
+        [TestMethod]
+        public void Test_1041_Load_MissingFileIsCreatedWithTheDefaultsAndAHint()
+        {
+            // Arrange
+            var file = Path.Combine(_directory, ExportFormats.SettingsFileName);
+
+            // Act
+            var settings = ExportFormatSettings.Load(_directory);
+
+            // Assert
+            Assert.IsTrue(settings.WasCreated);
+            Assert.IsTrue(File.Exists(file));
+            StringAssert.Contains(settings.Hint, file);
+            StringAssert.Contains(settings.Hint, "check");
+            Assert.AreEqual(".awl", settings.Get("code-blocks-STL"));
+            Assert.AreEqual(SimaticSd, settings.Get("plc-data-types"));
+            Assert.AreEqual(ExportFormats.Defaults.Count, settings.Values.Count);
+        }
+
+        [TestMethod]
+        public void Test_1043_Load_CreatedFileIsValidJsonThatLoadsAgainWithoutAHint()
+        {
+            // Arrange
+            var created = ExportFormatSettings.Load(_directory);
+
+            // Act
+            var reloaded = ExportFormatSettings.Load(_directory);
+
+            // Assert
+            Assert.IsTrue(created.WasCreated);
+            Assert.IsFalse(reloaded.WasCreated);
+            Assert.IsNull(reloaded.Hint);
+            CollectionAssert.AreEquivalent(created.Values.ToList(), reloaded.Values.ToList());
+            Assert.IsFalse(File.Exists(Path.Combine(_directory, ExportFormats.SettingsFileName + ".tmp")), "the temporary file is moved away");
+            Assert.IsFalse(File.ReadAllBytes(Path.Combine(_directory, ExportFormats.SettingsFileName)).Take(3).SequenceEqual(new byte[] { 0xEF, 0xBB, 0xBF }), "no BOM");
+        }
+
+        [TestMethod]
+        public void Test_1044_Load_CreatesTheExportFolderWhenItDoesNotExistYet()
+        {
+            // Arrange
+            var nested = Path.Combine(_directory, "export", "Program");
+
+            // Act
+            var settings = ExportFormatSettings.Load(nested);
+
+            // Assert
+            Assert.IsTrue(settings.WasCreated);
+            Assert.IsTrue(File.Exists(Path.Combine(nested, ExportFormats.SettingsFileName)));
+        }
+
+        [TestMethod]
+        public void Test_1045_Load_ExistingFileIsNeverOverwritten()
+        {
+            // Arrange
+            var file = Path.Combine(_directory, ExportFormats.SettingsFileName);
+            var own = "{ \"version-control-interface\": { \"code-blocks-STL\": \".xml\" } }";
+            File.WriteAllText(file, own);
+
+            // Act
+            var settings = ExportFormatSettings.Load(_directory);
+
+            // Assert
+            Assert.IsFalse(settings.WasCreated);
+            Assert.AreEqual(own, File.ReadAllText(file));
+            Assert.AreEqual(1, settings.Values.Count, "an entry the file lacks is not filled in from the defaults");
+        }
+
+        [TestMethod]
+        public void Test_1046_Defaults_CoverEveryObjectTypeOfTheScreenshotWithAKnownFormat()
+        {
+            var keys = ExportFormats.Defaults.Select(d => d.Key).ToList();
+
+            foreach (var key in new[]
+            {
+                "code-blocks-LAD", "code-blocks-FBD", "code-blocks-SCL", "code-blocks-STL", "code-blocks-LAD-STL", "code-blocks-GRAPH",
+                "data-blocks", "safety-data-blocks-F-DBs", "plc-data-types", "f-compliant-plc-data-types-UDT", "plc-tables", "technology-objects"
+            })
+            {
+                CollectionAssert.Contains(keys, key);
+            }
+
+            Assert.AreEqual(12, keys.Count);
+            Assert.IsTrue(ExportFormats.Defaults.All(d => ExportFormats.ParseKind(d.Value) != ExportFormatKind.Unknown));
+            Assert.AreEqual(".awl", ExportFormats.Defaults.Single(d => d.Key == "code-blocks-STL").Value);
+            Assert.AreEqual(".xml", ExportFormats.Defaults.Single(d => d.Key == "code-blocks-GRAPH").Value);
+            Assert.AreEqual(".xml", ExportFormats.Defaults.Single(d => d.Key == "plc-tables").Value);
+            Assert.AreEqual("ExportTagTable", ExportFormats.RecommendedTool("plc-tables", ExportFormatKind.Xml));
+            Assert.AreEqual(".xml", ExportFormats.Defaults.Single(d => d.Key == "technology-objects").Value);
+            Assert.IsNull(ExportFormats.RecommendedTool("technology-objects", ExportFormatKind.Xml), "no tool exports technology objects");
+            Assert.AreEqual(".xml", ExportFormats.Defaults.Single(d => d.Key == "code-blocks-LAD-STL").Value);
+            Assert.AreEqual("ExportBlock", ExportFormats.RecommendedTool("code-blocks-LAD-STL", ExportFormatKind.Xml));
+
+            foreach (var removed in new[] { "hmi unified global scripts", "PLC tag tables", "technology objects" })
+            {
+                CollectionAssert.DoesNotContain(keys, removed);
+            }
+        }
+
+        [TestMethod]
+        public void Test_1042_Load_EmptyExportPathFails()
+        {
+            Assert.AreEqual(PortalErrorCode.InvalidParams, Throws(() => ExportFormatSettings.Load("  ")).Code);
+        }
+
+        [TestMethod]
+        public void Test_1050_PlanBlock_FollowsTheConfiguredFormat()
+        {
+            // Arrange
+            var settings = SettingsOf(
+                ("code-blocks-LAD", SimaticSd),
+                ("code-blocks-FBD", ".xml"),
+                ("code-blocks-STL", ".awl"),
+                ("data-blocks", ".db"));
+
+            // Act
+            var lad = PlcProgram.PlanBlock(false, ProgrammingLanguage.LAD, settings);
+            var fbd = PlcProgram.PlanBlock(false, ProgrammingLanguage.FBD, settings);
+            var stl = PlcProgram.PlanBlock(false, ProgrammingLanguage.STL, settings);
+            var db = PlcProgram.PlanBlock(true, ProgrammingLanguage.DB, settings);
+
+            // Assert
+            Assert.AreEqual(ProgramBlockFormat.Document, lad.Format);
+            Assert.AreEqual(".s7dcl", lad.Extension);
+            Assert.AreEqual(ProgramBlockFormat.Xml, fbd.Format);
+            Assert.AreEqual(ProgramBlockFormat.Source, stl.Format);
+            Assert.AreEqual(".awl", stl.Extension);
+            Assert.AreEqual(ProgramBlockFormat.Source, db.Format);
+            Assert.AreEqual(".db", db.Extension);
+        }
+
+        [TestMethod]
+        public void Test_1051_PlanBlock_GraphFollowsItsSetting()
+        {
+            // Arrange
+            var settings = SettingsOf(("code-blocks-GRAPH", ".xml"));
+
+            // Act
+            var graph = PlcProgram.PlanBlock(false, ProgrammingLanguage.GRAPH, settings);
+
+            // Assert
+            Assert.AreEqual(ProgramBlockFormat.Xml, graph.Format);
+            Assert.AreEqual(".xml", graph.Extension);
+        }
+
+        [TestMethod]
+        public void Test_1052_PlanBlock_GraphWithoutEntryFallsBackToXml()
+        {
+            // Arrange: a tia.json written before GRAPH had a setting
+            var settings = SettingsOf(("code-blocks-LAD", SimaticSd));
+
+            // Act
+            var graph = PlcProgram.PlanBlock(false, ProgrammingLanguage.GRAPH, settings);
+
+            // Assert
+            Assert.AreEqual(ProgramBlockFormat.Xml, graph.Format);
+            Assert.AreEqual(".xml", graph.Extension);
+        }
+
+        [TestMethod]
+        public void Test_1053_PlanBlock_OtherTypeWithoutEntryStillFails()
+        {
+            // Arrange
+            var settings = SettingsOf(("code-blocks-GRAPH", ".xml"));
+
+            // Act and Assert
+            Assert.AreEqual(PortalErrorCode.InvalidParams, Throws(() => PlcProgram.PlanBlock(false, ProgrammingLanguage.LAD, settings)).Code);
+        }
+
+        [TestMethod]
+        public void Test_1054_IsStlRejectedBySimaticSd_RecognizesTheMessageOfTiaPortal()
+        {
+            // Arrange: the message of the report, and a reworded one
+            const string reported = "Error when calling method ExportAsDocuments of type Siemens.Engineering.SW.Blocks.FB. " +
+                                    "Blocks with the programming language STL cannot be exported to or imported from SIMATIC SD.";
+            const string reworded = "A block with STL networks cannot be exported as a SIMATIC SD document.";
+
+            // Act and Assert
+            Assert.IsTrue(PlcProgram.IsStlRejectedBySimaticSd(reported));
+            Assert.IsTrue(PlcProgram.IsStlRejectedBySimaticSd(reworded));
+        }
+
+        [TestMethod]
+        public void Test_1055_IsStlRejectedBySimaticSd_IgnoresOtherErrors()
+        {
+            Assert.IsFalse(PlcProgram.IsStlRejectedBySimaticSd("The object needs preparation for the format of Simatic SD"), "no STL");
+            Assert.IsFalse(PlcProgram.IsStlRejectedBySimaticSd("STL blocks cannot be exported as a source"), "no SIMATIC SD");
+            Assert.IsFalse(PlcProgram.IsStlRejectedBySimaticSd("Constellation cannot be exported to SIMATIC SD"), "STL only inside another word");
+            Assert.IsFalse(PlcProgram.IsStlRejectedBySimaticSd(null));
+            Assert.IsFalse(PlcProgram.IsStlRejectedBySimaticSd(string.Empty));
+        }
+
+        [TestMethod]
+        public void Test_1056_PlanMixedBlock_MissingEntryAndXmlGiveXml()
+        {
+            // Arrange
+            var missing = SettingsOf(("code-blocks-LAD", SimaticSd));
+            var xml = SettingsOf(("code-blocks-LAD-STL", ".xml"));
+
+            // Act
+            var fromMissing = PlcProgram.PlanMixedBlock(missing);
+            var fromXml = PlcProgram.PlanMixedBlock(xml);
+
+            // Assert
+            Assert.AreEqual(ProgramBlockFormat.Xml, fromMissing.Format);
+            Assert.AreEqual(".xml", fromMissing.Extension);
+            Assert.AreEqual(ProgramBlockFormat.Xml, fromXml.Format);
+        }
+
+        [TestMethod]
+        public void Test_1057_PlanMixedBlock_OtherValuesAreSkippedAndNameTheKey()
+        {
+            foreach (var value in new[] { SimaticSd, ".awl" })
+            {
+                // Act
+                var plan = PlcProgram.PlanMixedBlock(SettingsOf(("code-blocks-LAD-STL", value)));
+
+                // Assert
+                Assert.AreEqual(ProgramBlockFormat.None, plan.Format, value);
+                StringAssert.Contains(plan.Reason, "code-blocks-LAD-STL");
+                StringAssert.Contains(plan.Reason, ".xml", "the reason names the format that works");
+            }
+        }
+
+        [TestMethod]
+        public void Test_1051_PlanBlock_SourceFormatForABlockWithoutSourceFormIsSkippedWithAReason()
+        {
+            // Arrange
+            var settings = SettingsOf(("code-blocks-LAD", ".awl"));
+
+            // Act
+            var plan = PlcProgram.PlanBlock(false, ProgrammingLanguage.LAD, settings);
+
+            // Assert
+            Assert.AreEqual(ProgramBlockFormat.None, plan.Format);
+            StringAssert.Contains(plan.Reason, "no source form");
+        }
+
+        [TestMethod]
+        public void Test_1052_PlanBlock_LanguageWithoutASettingIsSkipped()
+        {
+            var plan = PlcProgram.PlanBlock(false, (ProgrammingLanguage)(-1), SettingsOf(("code-blocks-LAD", ".xml")));
+
+            Assert.AreEqual(ProgramBlockFormat.None, plan.Format);
+            StringAssert.Contains(plan.Reason, "export format settings");
+        }
+
+        // Test_1054 ('GRAPH without a setting is skipped') was removed: it contradicted
+        // Test_1052_PlanBlock_GraphWithoutEntryFallsBackToXml, which describes the current behaviour.
+
+        [TestMethod]
+        public void Test_1053_PlanBlock_MissingEntryAndUnknownFormatFail()
+        {
+            var settings = SettingsOf(("code-blocks-LAD", ".txt"));
+
+            var missing = Throws(() => PlcProgram.PlanBlock(false, ProgrammingLanguage.SCL, settings));
+            var unknown = Throws(() => PlcProgram.PlanBlock(false, ProgrammingLanguage.LAD, settings));
+
+            Assert.AreEqual(PortalErrorCode.InvalidParams, missing.Code);
+            StringAssert.Contains(missing.Message, "code-blocks-SCL");
+            Assert.AreEqual(PortalErrorCode.InvalidParams, unknown.Code);
+            StringAssert.Contains(unknown.Message, ".txt");
+        }
+
+        [TestMethod]
+        public void Test_1060_PlanType_ReadsThePlcDataTypeEntryAndFailsWithoutIt()
+        {
+            Assert.AreEqual(ExportFormatKind.SimaticSd, PlcProgram.PlanType(SettingsOf(("plc-data-types", SimaticSd))));
+            Assert.AreEqual(ExportFormatKind.Source, PlcProgram.PlanType(SettingsOf(("plc-data-types", ".udt"))));
+
+            var ex = Throws(() => PlcProgram.PlanType(SettingsOf(("code-blocks-LAD", ".xml"))));
+
+            Assert.AreEqual(PortalErrorCode.InvalidParams, ex.Code);
+            StringAssert.Contains(ex.Message, "plc-data-types");
+        }
+
+        [TestMethod]
+        public void Test_1070_BuildTools_GetExportFormatsIsReadOnly()
+        {
+            var readOnly = Program.BuildTools(allowWrite: false).Select(t => t.ProtocolTool.Name).ToList();
+
+            CollectionAssert.Contains(readOnly, "GetExportFormats");
+        }
+    }
+}

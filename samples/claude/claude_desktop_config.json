@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "vscode-tiaportal-mcp": {
+      "command": "C:\Users\<NAME>\TiaMcp\server\TiaMcpServer.exe",
+      "args": [
+        "--tia-major-version", "20",
+        "--software-path", "PLC_1",
+        "--export-path", "C:\Users\<NAME>\TiaMcp\Project",
+        "--keep-structure",
+        "--allow-write"
+      ],
+      "env": {}
+    }
+  }
+}

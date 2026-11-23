@@ -1,0 +1,15 @@
+﻿{
+  "version-control-interface": {
+    "code-blocks-LAD": ".xml",
+    "code-blocks-LAD-STL": ".xml",
+    "code-blocks-FBD": ".xml",
+    "code-blocks-GRAPH": ".xml",
+    "code-blocks-SCL": ".scl",
+    "code-blocks-STL": ".awl",
+    "data-blocks": ".db",
+    "safety-data-blocks-F-DBs": ".xml",
+    "PLC-data-types": ".udt",
+    "F-compliant-PLC-data-types-UDT": ".xml",
+    "technology-objects": ".xml"
+  }
+}

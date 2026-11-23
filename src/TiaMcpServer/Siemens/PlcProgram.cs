@@ -1,0 +1,385 @@
+using Siemens.Engineering.SW.Blocks;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text.RegularExpressions;
+
+namespace TiaMcpServer.Siemens
+{
+    /// <summary>How one program block travels in ExportPlcProgram / OverwritePlcProgram.</summary>
+    public enum ProgramBlockFormat
+    {
+        /// <summary>External source file: '.scl', '.awl' or '.db'.</summary>
+        Source,
+
+        /// <summary>SimaticML file: '.xml'. Without export format settings only LAD blocks, which have no source form.</summary>
+        Xml,
+
+        /// <summary>SIMATIC SD documents: '.s7dcl' and '.s7res'. Only when the export format settings say so.</summary>
+        Document,
+
+        /// <summary>Neither; the block is skipped and the reason is reported.</summary>
+        None
+    }
+
+    /// <summary>What OverwritePlcProgram does with one file of the folder tree. The order is the order of the first import round.</summary>
+    public enum ProgramFileKind
+    {
+        /// <summary>'.udt': a PLC data type source.</summary>
+        UdtSource,
+
+        /// <summary>'.s7dcl' (or its '.s7res') below the 'PLC data types' folder: a SIMATIC SD type. Needs TIA Portal V21.</summary>
+        DocumentType,
+
+        /// <summary>'.db', '.awl', '.scl': a block source.</summary>
+        BlockSource,
+
+        /// <summary>'.xml' below the 'Program blocks' folder: a SimaticML block.</summary>
+        XmlBlock,
+
+        /// <summary>'.s7dcl' (or its '.s7res') below the 'Program blocks' folder: a SIMATIC SD block. Needs TIA Portal V20.</summary>
+        DocumentBlock,
+
+        /// <summary>Not part of the program tree; see the reason.</summary>
+        Ignored
+    }
+
+    /// <summary>The decision for one block: the format, the file extension and, for None, the reason.</summary>
+    public sealed class BlockPlan
+    {
+        public BlockPlan(ProgramBlockFormat format, string? extension, string? reason)
+        {
+            Format = format;
+            Extension = extension;
+            Reason = reason;
+        }
+
+        public ProgramBlockFormat Format { get; }
+
+        public string? Extension { get; }
+
+        public string? Reason { get; }
+    }
+
+    /// <summary>The decision for one file of an import tree. A null reason means "not part of the tree, say nothing".</summary>
+    public sealed class FilePlan
+    {
+        public FilePlan(ProgramFileKind kind, string? reason)
+        {
+            Kind = kind;
+            Reason = reason;
+        }
+
+        public ProgramFileKind Kind { get; }
+
+        public string? Reason { get; }
+    }
+
+    /// <summary>The outcome of <see cref="PlcProgram.RunRounds{T}"/>.</summary>
+    public sealed class RoundsResult<T>
+    {
+        /// <summary>Items that were imported, in the order they succeeded.</summary>
+        public List<T> Done { get; } = new List<T>();
+
+        /// <summary>Items that never succeeded, each with the error of its last attempt.</summary>
+        public List<(T Item, string Error)> Failed { get; } = new List<(T Item, string Error)>();
+
+        /// <summary>How many passes over the pending items were made.</summary>
+        public int Rounds { get; set; }
+    }
+
+    /// <summary>
+    /// The rules behind ExportPlcProgram and OverwritePlcProgram, free of TIA Portal so they can be
+    /// tested without it:
+    /// - which format a block gets: source files where Openness can generate them (SCL, STL,
+    ///   data blocks), XML for LAD, nothing for the rest;
+    /// - which role a file of the import tree plays;
+    /// - the rounds that let objects depend on each other across both formats.
+    ///
+    /// Callers: Portal.Plc.cs, and Portal.Sources.cs for the extension table. No file I/O.
+    /// </summary>
+    public static class PlcProgram
+    {
+        public const string XmlExtension = ".xml";
+
+        public const string DocumentExtension = ".s7dcl";
+
+        /// <summary>The resource file that belongs to a '.s7dcl'; it has no object of its own.</summary>
+        public const string ResourceExtension = ".s7res";
+
+        /// <summary>
+        /// The extension Openness demands for the source of one block, or null when the block has
+        /// no source form. Data blocks are matched by type rather than by language, because the DB
+        /// family spans several language values that all export as '.db'.
+        /// </summary>
+        public static string? SourceExtension(bool isDataBlock, ProgrammingLanguage language)
+        {
+            if (isDataBlock)
+            {
+                return ".db";
+            }
+
+            switch (language)
+            {
+                case ProgrammingLanguage.STL:
+                    return ".awl";
+
+                case ProgrammingLanguage.SCL:
+                    return ".scl";
+
+                default:
+                    return null;
+            }
+        }
+
+        /// <summary>Source if Openness can generate one, XML for LAD, otherwise nothing.</summary>
+        public static BlockPlan ClassifyBlock(bool isDataBlock, ProgrammingLanguage language)
+        {
+            var extension = SourceExtension(isDataBlock, language);
+
+            if (extension != null)
+            {
+                return new BlockPlan(ProgramBlockFormat.Source, extension, null);
+            }
+
+            if (language == ProgrammingLanguage.LAD)
+            {
+                return new BlockPlan(ProgramBlockFormat.Xml, XmlExtension, null);
+            }
+
+            return new BlockPlan(
+                ProgramBlockFormat.None,
+                null,
+                $"programming language {language} has no source form and only LAD is exported as XML by this tool; " +
+                "read it with 'GetXmlBlock' instead");
+        }
+
+        /// <summary>
+        /// The format of one block as the export format settings configure it for its object type.
+        /// Throws when the settings have no usable entry for the type, so the export fails before it
+        /// writes anything instead of guessing; a block of a language without a setting is skipped.
+        /// </summary>
+        public static BlockPlan PlanBlock(bool isDataBlock, ProgrammingLanguage language, ExportFormatSettings settings)
+        {
+            var key = ExportFormats.BlockKey(isDataBlock, language);
+
+            if (key == null)
+            {
+                return new BlockPlan(
+                    ProgramBlockFormat.None,
+                    null,
+                    $"programming language {language} has no entry in the export format settings; " +
+                    "read it with 'GetXmlBlock' instead");
+            }
+
+            // A tia.json written before GRAPH had a setting has no entry for it. GRAPH is exported as
+            // XML (the default of a new file), so such a file keeps working instead of failing the export.
+            if (key == ExportFormats.GraphBlocksKey && settings.Get(key) == null)
+            {
+                return new BlockPlan(ProgramBlockFormat.Xml, XmlExtension, null);
+            }
+
+            switch (RequireKind(settings, key))
+            {
+                case ExportFormatKind.SimaticSd:
+                    return new BlockPlan(ProgramBlockFormat.Document, DocumentExtension, null);
+
+                case ExportFormatKind.Xml:
+                    return new BlockPlan(ProgramBlockFormat.Xml, XmlExtension, null);
+
+                default:
+                    var extension = SourceExtension(isDataBlock, language);
+
+                    return extension != null
+                        ? new BlockPlan(ProgramBlockFormat.Source, extension, null)
+                        : new BlockPlan(
+                            ProgramBlockFormat.None,
+                            null,
+                            $"'{key}' is configured as {settings.Get(key)}, but a {language} block has no source form");
+            }
+        }
+
+        private static readonly Regex StlWord = new Regex(@"\bSTL\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+        /// <summary>
+        /// True when the error of TIA Portal says that SIMATIC SD cannot take a block because of its STL
+        /// networks ("Blocks with the programming language STL cannot be exported to or imported from
+        /// SIMATIC SD"). A LAD or FBD block can contain STL networks, and TIA Portal only names STL then.
+        /// Other SD errors, such as a project that is not prepared for SIMATIC SD, do not match.
+        /// </summary>
+        public static bool IsStlRejectedBySimaticSd(string? message)
+        {
+            return !string.IsNullOrEmpty(message) &&
+                   message!.IndexOf("SIMATIC SD", StringComparison.OrdinalIgnoreCase) >= 0 &&
+                   message.IndexOf("cannot be", StringComparison.OrdinalIgnoreCase) >= 0 &&
+                   StlWord.IsMatch(message);
+        }
+
+        /// <summary>
+        /// The format of a LAD or FBD block that contains STL networks, after SIMATIC SD refused it: the
+        /// entry 'code-blocks-LAD-STL' of the settings, where a missing entry means '.xml'. Only XML can
+        /// hold such a block, so any other value is a skip with a reason that names the key.
+        /// </summary>
+        public static BlockPlan PlanMixedBlock(ExportFormatSettings settings)
+        {
+            var value = settings.Get(ExportFormats.LadStlBlocksKey);
+
+            if (value == null || ExportFormats.ParseKind(value) == ExportFormatKind.Xml)
+            {
+                return new BlockPlan(ProgramBlockFormat.Xml, XmlExtension, null);
+            }
+
+            return new BlockPlan(
+                ProgramBlockFormat.None,
+                null,
+                $"'{ExportFormats.LadStlBlocksKey}' is configured as {value}, but a block with STL networks can only be exported as .xml");
+        }
+
+        /// <summary>The format of the PLC data types as the export format settings configure it; throws like <see cref="PlanBlock"/>.</summary>
+        public static ExportFormatKind PlanType(ExportFormatSettings settings)
+        {
+            return RequireKind(settings, ExportFormats.PlcTypesKey);
+        }
+
+        private static ExportFormatKind RequireKind(ExportFormatSettings settings, string key)
+        {
+            var value = settings.Get(key);
+
+            if (value == null)
+            {
+                throw new PortalException(PortalErrorCode.InvalidParams,
+                    $"'{settings.File}' has no entry \"{key}\" in \"{ExportFormats.GroupName}\". Add the export format of TIA Portal for it, " +
+                    $"for example \"{key}\": \".xml\"");
+            }
+
+            var kind = ExportFormats.ParseKind(value);
+
+            if (kind == ExportFormatKind.Unknown)
+            {
+                throw new PortalException(PortalErrorCode.InvalidParams,
+                    $"'{settings.File}': \"{key}\" is \"{value}\", which is not a known export format. " +
+                    "Use the text TIA Portal shows: 'SIMATIC SD(.s7dcl, .s7res)', '.xml', '.awl', '.scl', '.db' or '.udt'");
+            }
+
+            return kind;
+        }
+
+        /// <summary>
+        /// Decides what a file of the import tree is. <paramref name="relativeDirectory"/> is its
+        /// folder below the import root with forward slashes; the first segment is the localized
+        /// system folder ('Program blocks', 'PLC data types'). An '.xml' file only counts below the
+        /// block folder, because '.xml' also holds tag tables and the like. A SIMATIC SD document
+        /// ('.s7dcl', or the '.s7res' that belongs to it) is a block below the block folder and a
+        /// type below the type folder. <paramref name="fileName"/> is only used to recognise the
+        /// 'tia.json' of ExportPlcProgram, which is a setting and not part of the program.
+        /// </summary>
+        public static FilePlan ClassifyFile(string relativeDirectory, string extension, string blockRoot, string typeRoot, string fileName = "")
+        {
+            switch (extension.ToLowerInvariant())
+            {
+                case DocumentExtension:
+                case ResourceExtension:
+                    return ClassifyDocument(relativeDirectory, blockRoot, typeRoot);
+
+                case ".json" when fileName.Equals("tia.json", StringComparison.OrdinalIgnoreCase):
+                    return new FilePlan(ProgramFileKind.Ignored,
+                        "the export format settings that ExportPlcProgram reads; they are not part of the program");
+
+                case ".udt":
+                    return new FilePlan(ProgramFileKind.UdtSource, null);
+
+                case ".db":
+                case ".awl":
+                case ".scl":
+                    return new FilePlan(ProgramFileKind.BlockSource, null);
+
+                case XmlExtension:
+                    return FirstSegment(relativeDirectory).Equals(blockRoot, StringComparison.OrdinalIgnoreCase) && blockRoot.Length > 0
+                        ? new FilePlan(ProgramFileKind.XmlBlock, null)
+                        : new FilePlan(ProgramFileKind.Ignored,
+                            $"an XML file is imported only below the '{blockRoot}' folder; '{typeRoot}' and other folders hold sources or other kinds of XML");
+
+                case ".stl":
+                    return new FilePlan(ProgramFileKind.Ignored,
+                        "'.stl' is not a TIA Portal source extension; STL blocks are written as '.awl'");
+
+                default:
+                    return new FilePlan(ProgramFileKind.Ignored, null);
+            }
+        }
+
+        private static FilePlan ClassifyDocument(string relativeDirectory, string blockRoot, string typeRoot)
+        {
+            var folder = FirstSegment(relativeDirectory);
+
+            if (typeRoot.Length > 0 && folder.Equals(typeRoot, StringComparison.OrdinalIgnoreCase))
+            {
+                return new FilePlan(ProgramFileKind.DocumentType, null);
+            }
+
+            if (blockRoot.Length > 0 && folder.Equals(blockRoot, StringComparison.OrdinalIgnoreCase))
+            {
+                return new FilePlan(ProgramFileKind.DocumentBlock, null);
+            }
+
+            return new FilePlan(ProgramFileKind.Ignored,
+                $"a SIMATIC SD document is imported only below the '{blockRoot}' or '{typeRoot}' folder");
+        }
+
+        /// <summary>
+        /// Imports the items in rounds. An object may need another one that comes later in the list
+        /// (a LAD block calls an SCL block, an instance data block needs its function block), so
+        /// no fixed order fits every project. Every round tries all pending items; the ones that
+        /// fail stay pending and are tried again as long as the last round imported at least one
+        /// item. What is left then failed for a reason of its own and is reported with the error
+        /// of its last attempt.
+        /// </summary>
+        /// <param name="items">The work list, in the order of the first round.</param>
+        /// <param name="import">Imports one item; throws when it cannot.</param>
+        public static RoundsResult<T> RunRounds<T>(IEnumerable<T> items, Action<T> import)
+        {
+            var result = new RoundsResult<T>();
+            var pending = items.Select(item => (Item: item, Error: string.Empty)).ToList();
+
+            while (pending.Count > 0)
+            {
+                result.Rounds++;
+
+                var failed = new List<(T Item, string Error)>();
+
+                foreach (var (item, _) in pending)
+                {
+                    try
+                    {
+                        import(item);
+                        result.Done.Add(item);
+                    }
+                    catch (Exception ex)
+                    {
+                        failed.Add((item, ex.Message));
+                    }
+                }
+
+                var progressed = failed.Count < pending.Count;
+
+                pending = failed;
+
+                if (!progressed)
+                {
+                    break;
+                }
+            }
+
+            result.Failed.AddRange(pending.Select(p => (p.Item, p.Error)));
+
+            return result;
+        }
+
+        private static string FirstSegment(string relativeDirectory)
+        {
+            var separator = relativeDirectory.IndexOf('/');
+
+            return separator < 0 ? relativeDirectory : relativeDirectory.Substring(0, separator);
+        }
+    }
+}

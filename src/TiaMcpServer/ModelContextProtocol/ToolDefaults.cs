@@ -1,0 +1,225 @@
+﻿using ModelContextProtocol.Protocol;
+using ModelContextProtocol.Server;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Reflection;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+
+namespace TiaMcpServer.ModelContextProtocol
+{
+    /// <summary>
+    /// Lets the server's command line preset the tool arguments 'softwarePath', 'exportPath',
+    /// 'importPath' (follows '--export-path'), 'keepStructure' and 'withDependencies', so a client
+    /// configures them once (the "args" of its MCP server entry) and the model can neither forget nor
+    /// change them. '--project-path' is not one of them: it is only the fallback project of
+    /// TiaConnect/OpenTiaProject when nothing is open in TIA Portal (see Configure).
+    ///
+    /// Callers: Program.cs (Configure at startup, Apply for each registered tool, Filter as the
+    /// call-tool filter) and McpServer.GetState (Presets). Affected API: for every tool that
+    /// declares a preset argument, the argument is removed from the tool schema and every call
+    /// gets the preset, whatever it sent. Every preset is binding. Without any preset nothing
+    /// changes. Reads/writes no data files.
+    ///
+    /// Same shape as PortalSelection: one filter rather than a default on every tool method.
+    /// Tools invoked directly (the MSTest suite) bypass it.
+    /// </summary>
+    public static class ToolDefaults
+    {
+        public const string ProjectPath = "projectPath";
+        public const string SoftwarePath = "softwarePath";
+        public const string ExportPath = "exportPath";
+        public const string ImportPath = "importPath";
+        public const string KeepStructure = "keepStructure";
+        public const string WithDependencies = "withDependencies";
+
+        private static readonly IReadOnlyDictionary<string, JsonElement> _none =
+            new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+
+        private static readonly Dictionary<string, string[]> _presetArguments = new(StringComparer.Ordinal);
+
+        private static readonly ISet<string> _noneForced = new HashSet<string>(StringComparer.Ordinal);
+
+        public static IReadOnlyDictionary<string, JsonElement> Presets { get; private set; } = _none;
+
+        /// <summary>
+        /// The preset arguments a call cannot override: every argument that has a preset
+        /// ('softwarePath', 'exportPath', 'importPath' and the flags). They are hidden from the tool
+        /// schema. Empty without any preset. ('--force-presets' is deprecated and changes nothing.)
+        /// </summary>
+        public static ISet<string> Forced { get; private set; } = _noneForced;
+
+        public static void Configure(CliOptions options)
+        {
+            var presets = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+
+            // '--project-path' is deliberately NOT a binding preset. The tools name the argument
+            // 'projectpath', so the old 'projectPath' preset never matched one - yet the server
+            // instructions still announced it as fixed. Binding it would also be harmful: TiaConnect
+            // and OpenTiaProject would then always open the configured project and close the one the
+            // user has open in TIA Portal, discarding unsaved changes. The option keeps its real
+            // meaning, a fallback when no project is open (McpServer.OpenAndDescribe reads
+            // CliOptions.Current.ProjectPath).
+
+            if (options.SoftwarePath != null)
+            {
+                presets[SoftwarePath] = JsonSerializer.SerializeToElement(options.SoftwarePath);
+            }
+
+            if (options.ExportPath != null)
+            {
+                presets[ExportPath] = JsonSerializer.SerializeToElement(options.ExportPath);
+            }
+
+            // The tools default both flags to false, so only 'true' needs a preset.
+            if (options.KeepStructure)
+            {
+                presets[KeepStructure] = JsonSerializer.SerializeToElement(true);
+            }
+
+            if (options.WithDependencies)
+            {
+                presets[WithDependencies] = JsonSerializer.SerializeToElement(true);
+            }
+
+            // A folder-based import reads the tree an export wrote, so 'importPath' follows '--export-path'.
+            if (options.ExportPath != null)
+            {
+                presets[ImportPath] = presets[ExportPath];
+            }
+
+            Presets = presets;
+
+            // Every preset is binding: what the configuration sets cannot be changed in the chat.
+            Forced = presets.Count == 0
+                ? _noneForced
+                : new HashSet<string>(presets.Keys, StringComparer.Ordinal);
+        }
+
+        public static McpServerTool Apply(MethodInfo method, McpServerTool tool)
+        {
+            var names = method.GetParameters()
+                .Select(p => p.Name!)
+                .Where(Presets.ContainsKey)
+                .ToArray();
+
+            if (names.Length == 0)
+            {
+                return tool;
+            }
+
+            var schema = JsonNode.Parse(tool.ProtocolTool.InputSchema.GetRawText()) as JsonObject;
+
+            if (schema == null)
+            {
+                return tool;
+            }
+
+            if (schema["required"] is JsonArray required)
+            {
+                foreach (var item in required.Where(n => n != null && names.Contains(n.GetValue<string>())).ToList())
+                {
+                    required.Remove(item);
+                }
+
+                if (required.Count == 0)
+                {
+                    schema.Remove("required");
+                }
+            }
+
+            if (schema["properties"] is JsonObject properties)
+            {
+                // Every preset is binding, so the argument is not offered at all
+                foreach (var name in names)
+                {
+                    properties.Remove(name);
+                }
+            }
+
+            using (var document = JsonDocument.Parse(schema.ToJsonString()))
+            {
+                tool.ProtocolTool.InputSchema = document.RootElement.Clone();
+            }
+
+            lock (_presetArguments)
+            {
+                _presetArguments[tool.ProtocolTool.Name] = names;
+            }
+
+            return tool;
+        }
+
+        public static McpRequestFilter<CallToolRequestParams, CallToolResult> Filter =>
+            next => (context, cancellationToken) =>
+            {
+                var name = context.Params?.Name;
+
+                string[]? names = null;
+                lock (_presetArguments)
+                {
+                    if (name != null)
+                    {
+                        _presetArguments.TryGetValue(name, out names);
+                    }
+                }
+
+                if (names != null)
+                {
+                    var arguments = context.Params!.Arguments ?? new Dictionary<string, JsonElement>();
+
+                    FillMissing(arguments, names, Presets, Forced);
+                    context.Params.Arguments = arguments;
+                }
+
+                return next(context, cancellationToken);
+            };
+
+        /// <summary>
+        /// Adds the preset of each named argument that the call omitted or sent as null or blank.
+        /// A value the caller did send is never replaced, except for the forced arguments, which
+        /// always take the preset.
+        /// </summary>
+        public static void FillMissing(
+            IDictionary<string, JsonElement> arguments,
+            IEnumerable<string> names,
+            IReadOnlyDictionary<string, JsonElement> presets,
+            ISet<string>? forced = null)
+        {
+            foreach (var name in names)
+            {
+                if (!presets.TryGetValue(name, out var preset))
+                {
+                    continue;
+                }
+
+                // A forced argument takes the preset whatever the call sent
+                if (forced != null && forced.Contains(name))
+                {
+                    arguments[name] = preset;
+                    continue;
+                }
+
+                if (!arguments.TryGetValue(name, out var given) || IsOmitted(given))
+                {
+                    arguments[name] = preset;
+                }
+            }
+        }
+
+        /// <summary>
+        /// True for a value that counts as "not given": null, undefined, or a blank string (models
+        /// often send "" instead of leaving the argument out).
+        /// </summary>
+        public static bool IsOmitted(JsonElement value)
+        {
+            return value.ValueKind switch
+            {
+                JsonValueKind.Null or JsonValueKind.Undefined => true,
+                JsonValueKind.String => string.IsNullOrWhiteSpace(value.GetString()),
+                _ => false
+            };
+        }
+    }
+}
