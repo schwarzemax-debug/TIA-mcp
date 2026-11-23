@@ -105,7 +105,24 @@ Arbeitsanleitung für Agenten (Abläufe, FUP-Rezept, Stolperfallen) in [docs/ANL
 > **Gruppe „Siemens TIA Openness“:** Ein Administrator fügt den Benutzer hinzu (*Computerverwaltung → Lokale
 > Benutzer und Gruppen → Gruppen*), danach **ab- und wieder anmelden**. Der Server ändert die Gruppe nicht selbst.
 
-### 2. Schnellinstallation (empfohlen)
+### 2. Variante A: Release-Paket herunterladen (ohne Bauen, empfohlen)
+
+Kein .NET SDK und kein Git nötig.
+
+1. Unter [**Releases**](https://github.com/schwarzemax-debug/TIA-mcp/releases/latest) die Datei
+   `TIA-mcp-v<Version>-tia20.zip` herunterladen und entpacken.
+2. Im entpackten Ordner:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\Install.ps1 -RegisterClaudeCode
+   ```
+
+Das kopiert den Server nach `%USERPROFILE%\TiaMcp\server`, entsperrt die heruntergeladenen Dateien, legt
+`%USERPROFILE%\TiaMcp\Project\tia.json` an, prüft mit `--doctor` und meldet den Server in Claude Code an
+(Optionen wie unten: `-InstallDir`, `-SoftwarePath`, `-ReadOnly`). Die `LIESMICH.md` im Paket listet jede Datei
+und wozu sie gebraucht wird.
+
+### 3. Variante B: aus dem Quellcode bauen
 
 ```powershell
 git clone https://github.com/schwarzemax-debug/TIA-mcp.git
@@ -132,7 +149,7 @@ Das Skript
 
 > Bei einem Update muss Claude geschlossen sein (oder `Kill-TiaMcpServers.bat` laufen), sonst ist die EXE gesperrt.
 
-### 3. Manuelle Installation
+### 4. Variante C: von Hand bauen
 
 ```powershell
 dotnet build src\TiaMcpServer\TiaMcpServer.csproj -c Release -o "$env:USERPROFILE\TiaMcp\server"
@@ -143,7 +160,7 @@ mkdir "$env:USERPROFILE\TiaMcp\Project"; copy samples\tia.json "$env:USERPROFILE
 Andere TIA-Version: `-p:TiaVersion=19` an `dotnet build` anhängen (getestet ist nur V20, für V21 die
 [Upstream-Extension](https://github.com/heilingbrunner/tiaportal-mcp) verwenden).
 
-### 4. Im MCP-Client eintragen
+### 5. Im MCP-Client eintragen
 
 <details open>
 <summary><b>Claude Code</b></summary>
@@ -192,7 +209,7 @@ Siehe [samples/vscode/mcp.json](samples/vscode/mcp.json) (`.vscode/mcp.json` im 
 
 </details>
 
-### 5. Agent-Anleitung hinterlegen (optional, empfohlen)
+### 6. Agent-Anleitung hinterlegen (optional, empfohlen)
 
 Damit der Assistent die Eigenheiten kennt (Ablauf, FUP-Rezept, „nie selbst speichern“), in der globalen
 `%USERPROFILE%\.claude\CLAUDE.md` z. B. eintragen:
@@ -287,7 +304,8 @@ TIA-mcp/
 │  ├─ ModelContextProtocol/   MCP-Tools, Prompts, Antworttypen
 │  └─ Siemens/                Openness-Zugriff (Portal.*.cs)
 ├─ tests/TiaMcpServer.Test/   MSTest (Unit- und TIA-Integrationstests)
-├─ tools/                     Installationsskript, Test-Clients, FUP-Generator
+├─ tools/                     Installation, Release-Paket, Test-Clients, FUP-Generator
+├─ packaging/                 Install.ps1 und LIESMICH.md für das Release-ZIP
 ├─ samples/                   Client-Konfigurationen, tia.json
 └─ docs/                      Anleitung, Referenz, Bilder
 ```
