@@ -207,7 +207,7 @@ Use the MoveBlock tool with these parameters:
         [McpServerPrompt(Name = "WriteBlockSource"), Description("Create or replace blocks and PLC data types from source text")]
         public static string WriteBlockSource(string softwarePath, string groupPath, string sourceText, string format = "scl", string compile = "true", string keepOnError = "false")
         {
-            return $@"Create or replace program blocks or PLC data types directly from source text and compile them (requires the server started with '--allow-write'). The object name comes from the source itself; an object of the same name is replaced. Write a UDT before the FB that uses it and an FB before the block that calls it. For LAD/FBD (also OB1 'Main') use format 'xml' with a SimaticML document; 'GetXmlBlock' of an existing block is the best template. The first call of a server session asks the user to confirm in a dialog; do not answer it for the user. Never save the project on your own.
+            return $@"Create or replace program blocks or PLC data types directly from source text and compile them (requires the server started with '--allow-write'). The object name comes from the source itself; an object of the same name is replaced. Write a UDT before the FB that uses it and an FB before the block that calls it. For LAD/FBD (also OB1 'Main') use format 'xml' with a SimaticML document; 'GetXmlBlock' of an existing block is the best template. There is no confirmation question; do not ask in the chat before writing. Never save the project on your own.
 
 Common parameter values:
 - softwarePath: defines the path in the project structure to the PLC software

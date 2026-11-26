@@ -919,7 +919,7 @@ namespace TiaMcpServer.Siemens
 
                     // Only reached when the body did not throw. Without this call the using
                     // block rolls the transaction back on dispose.
-                    transaction.CommitOnDispose();
+                    Commit(transaction, description);
 
                     if (access.IsCancellationRequested)
                     {
@@ -928,6 +928,110 @@ namespace TiaMcpServer.Siemens
 
                     return result;
                 }
+            }
+        }
+
+        /// <summary>
+        /// Openness refuses the commit when any call inside the transaction threw, even when the
+        /// code caught that exception ("Commit of a Transaction is not allowed after an exception
+        /// is thrown"). That message says nothing about the cause, so it is replaced by one that
+        /// says what happened: nothing of this step was changed.
+        /// </summary>
+        private void Commit(Transaction transaction, string description)
+        {
+            try
+            {
+                transaction.CommitOnDispose();
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "Commit refused for '{Description}'", description);
+
+                throw new PortalException(PortalErrorCode.InvalidState,
+                    $"TIA Portal refused to commit '{description}' because an Openness call inside it failed; everything of this step was rolled back, nothing was changed. " +
+                    $"TIA Portal: {ImportErrors.Describe(ex)}", null, ex);
+            }
+        }
+
+        /// <summary>The exclusive access of the running <see cref="InExclusiveAccess{T}"/>, for <see cref="InStep{T}"/>.</summary>
+        private ExclusiveAccess? _stepAccess;
+
+        /// <summary>
+        /// Like <see cref="InTransaction{T}"/>, but without one transaction around everything: the
+        /// body runs under exclusive access and puts each of its independent steps into its own
+        /// transaction with <see cref="InStep{T}"/>. For tools that import many files and report
+        /// per file what failed - in one transaction the first failure would poison the commit
+        /// of all the others.
+        /// </summary>
+        public T InExclusiveAccess<T>(string description, Func<T> body)
+        {
+            if (_portal == null || !(_project is ITransactionSupport) || _stepAccess != null)
+            {
+                return body();
+            }
+
+            ExclusiveAccess? access;
+
+            try
+            {
+                access = _portal.ExclusiveAccess(description);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogDebug(ex, "Exclusive access refused for '{Description}'; writing without transactions", description);
+
+                return body();
+            }
+
+            using (access)
+            {
+                _stepAccess = access;
+
+                try
+                {
+                    return body();
+                }
+                finally
+                {
+                    _stepAccess = null;
+                }
+            }
+        }
+
+        /// <summary>
+        /// One all-or-nothing step inside <see cref="InExclusiveAccess{T}"/>: its own transaction
+        /// and undo entry. A step that throws is rolled back alone and the exception, with TIA
+        /// Portal's own reason, reaches the caller. Outside InExclusiveAccess the body runs as it is.
+        /// </summary>
+        public T InStep<T>(string description, Func<T> body)
+        {
+            var access = _stepAccess;
+
+            if (access == null || !(_project is ITransactionSupport persistence))
+            {
+                return body();
+            }
+
+            Transaction? transaction;
+
+            try
+            {
+                transaction = access.Transaction(persistence, description);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogDebug(ex, "Transaction refused for step '{Description}'; writing without one", description);
+
+                return body();
+            }
+
+            using (transaction)
+            {
+                var result = body();
+
+                Commit(transaction, description);
+
+                return result;
             }
         }
 

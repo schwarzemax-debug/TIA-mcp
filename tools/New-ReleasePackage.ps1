@@ -3,10 +3,10 @@
   Baut das Release-Paket (ZIP mit server\, Install.ps1, LIESMICH.md, Vorlagen) nach artifacts\.
 
 .EXAMPLE
-  .\tools\New-ReleasePackage.ps1 -Version 0.4.0
+  .\tools\New-ReleasePackage.ps1 -Version 0.4.1
 #>
 param(
-  [string]$Version = '0.4.0',
+  [string]$Version = '0.4.1',
   [int]$TiaVersion = 20,
   [string]$OutDir = (Join-Path (Split-Path $PSScriptRoot -Parent) 'artifacts')
 )

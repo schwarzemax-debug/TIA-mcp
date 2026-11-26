@@ -22,7 +22,8 @@ namespace TiaMcpServer.ModelContextProtocol
         // Data: returns ResponseHardwareTransfer as MCP structuredContent. ExportHardware writes
         // one .aml file below exportPath and does not modify the project, so it is not a
         // [WriteTool]. ImportHardware changes the project and is only registered, and only runs,
-        // with '--allow-write'. A real import asks the user to confirm in a dialog of the client.
+        // with '--allow-write'. A real import asks the user to confirm in a dialog of the client only
+        // when the server runs with '--confirm-writes'.
 
         #region hardware
 
@@ -37,13 +38,13 @@ namespace TiaMcpServer.ModelContextProtocol
 
         [WriteTool]
         [McpServerTool(Name = "ImportHardware", Title = "Import hardware from AML", Destructive = true, OpenWorld = false, UseStructuredContent = true),
-         Description("Use this to import the AutomationML file '<importPath>/<softwarePath>/Hardware/<device name>.aml' that 'ExportHardware' wrote back into the open TIA Portal project, so the hardware configuration of the device changes. 'importOption' decides what happens to a device that exists: RetainTiaDevice (default) keeps it, OverwriteTiaDevice replaces it, MoveToParkingLot moves it to the parking lot. By default 'dryRun' is true and only checks the file. With dryRun=false the server asks the user itself to confirm by ticking the 'Yes, import' checkbox in a dialog of the client and imports nothing without it, so do not answer for the user; a client without such dialogs cannot run a real import. Never save on your own: after a real import tell the user the change is only in memory, and call SaveProject (SaveSession in a local session) only after the user explicitly says 'save project'")]
+         Description("Use this to import the AutomationML file '<importPath>/<softwarePath>/Hardware/<device name>.aml' that 'ExportHardware' wrote back into the open TIA Portal project, so the hardware configuration of the device changes. 'importOption' decides what happens to a device that exists: RetainTiaDevice (default) keeps it, OverwriteTiaDevice replaces it, MoveToParkingLot moves it to the parking lot. By default 'dryRun' is true and only checks the file. With dryRun=false the file is imported right away, without a confirmation question (only when the operator started the server with '--confirm-writes' does the client show a confirmation dialog, which the user answers). Never save on your own: after a real import tell the user the change is only in memory, and call SaveProject (SaveSession in a local session) only after the user explicitly says 'save project'")]
         public static Task<ResponseHardwareTransfer> ImportHardware(
             SdkMcpServer server,
             [Description("softwarePath: defines the path in the project structure to the PLC software; its device receives the import")] string softwarePath,
             [Description("importPath: directory on this machine that holds the file 'ExportHardware' wrote; read from <importPath>/<softwarePath>/Hardware/")] string importPath,
             [Description("importOption: RetainTiaDevice (default), OverwriteTiaDevice or MoveToParkingLot; what happens to a device that already exists")] string importOption = "RetainTiaDevice",
-            [Description("dryRun: default true, only checks the file and changes nothing. Set false to import: the server then asks the user to tick 'Yes, import' in a dialog, so do not ask in the chat first")] bool dryRun = true,
+            [Description("dryRun: default true, only checks the file and changes nothing. Set false to import right away; no confirmation question is needed")] bool dryRun = true,
             CancellationToken cancellationToken = default)
         {
             return ImportHardwareAsync(server, nameof(ImportHardware), softwarePath, importPath, importOption, dryRun, cancellationToken);
@@ -60,12 +61,13 @@ namespace TiaMcpServer.ModelContextProtocol
                 return HardwareCall(() => HardwareResponse(Portal.ImportHardware(softwarePath, importPath, importOption, dryRun: true), "checked"));
             }
 
-            if (server?.ClientCapabilities?.Elicitation == null)
+            if (!CliOptions.Current.ConfirmWrites)
             {
-                throw new McpException(
-                    $"'{toolName}' with dryRun=false is refused: this client cannot show the confirmation dialog in which the user ticks '{ImportConfirmation}' and submits (MCP elicitation). " +
-                    "Use dryRun=true to check the file, and run the import from a client that supports confirmation dialogs.");
+                // No MCP transaction (Guarded): TIA Portal refuses a CAx import inside exclusive access.
+                return HardwareCall(() => HardwareResponse(Portal.ImportHardware(softwarePath, importPath, importOption, dryRun: false), "imported"));
             }
+
+            EnsureCanConfirm(server, toolName);
 
             var preview = HardwareCall(() => Portal.ImportHardware(softwarePath, importPath, importOption, dryRun: true));
 

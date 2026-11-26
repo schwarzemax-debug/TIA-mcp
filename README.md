@@ -78,10 +78,22 @@ Was geändert wurde, steht in [CHANGELOG-V20.md](CHANGELOG-V20.md).
 
 - **Nur lesen**, solange der Server nicht mit `--allow-write` startet. Ohne den Schalter sind die verändernden
   Tools gar nicht registriert.
-- Jede Änderung läuft in einer **TIA-Transaktion** und wird bei einem Fehler komplett zurückgerollt.
+- Jede Änderung läuft in einer **TIA-Transaktion** und wird bei einem Fehler komplett zurückgerollt. Importe mehrerer
+  Dateien (`TiaPush`, `ImportPlcProgramChanges`, `OverwritePlcProgram`) haben **eine Transaktion pro Datei**: Eine
+  fehlerhafte Datei wird allein zurückgerollt und mit der Meldung von TIA in `Failures` genannt, die anderen bleiben.
 - Änderungen liegen nur **im Speicher**, bis jemand `SaveProject` aufruft.
-- `WriteBlockSource`/`TiaPush` fragen einmal pro Sitzung per Dialog nach („Yes, import“).
-- TIA selbst fragt bei jedem neuen Server-Prozess nach dem **Openness-Zugriff**.
+- **Keine Rückfragen:** Schreib- und Import-Tools laufen ohne Bestätigungsdialog. Wer einen Dialog („Yes, import“)
+  vor jedem Import will, startet den Server mit `--confirm-writes`.
+- TIA selbst fragt bei jedem neuen Server-Programm nach dem **Openness-Zugriff**.
+
+**Freigaben im Client:** Fragt der Agent trotzdem bei jedem Tool-Aufruf nach, kommt die Frage vom Client, nicht vom
+Server. So wird der Server dort dauerhaft freigegeben:
+
+| Client | Einstellung |
+| --- | --- |
+| Claude Code | `/permissions` → Allow `mcp__vscode-tiaportal-mcp` (oder in `settings.json` unter `permissions.allow`) |
+| GitHub Copilot CLI | Start mit `--allow-tool 'vscode-tiaportal-mcp'` (alle Tools dieses Servers) |
+| VS Code (Copilot Chat) | im Bestätigungsdialog des Tools „Immer erlauben“ wählen |
 
 Die vollständige englische Tool-Referenz des Upstream-Projekts liegt in [docs/REFERENCE.md](docs/REFERENCE.md), die
 Arbeitsanleitung für Agenten (Abläufe, FUP-Rezept, Stolperfallen) in [docs/ANLEITUNG.md](docs/ANLEITUNG.md).
@@ -264,7 +276,8 @@ Exportiere alle Bausteine in den Export-Ordner.
 | `--export-path <ordner>` | Basisordner für Export und Import (enthält `tia.json`) |
 | `--keep-structure` | Gruppenstruktur des Projekts im Export-Ordner nachbilden |
 | `--allow-write` | verändernde Tools freischalten (ohne: nur lesen) |
-| `--trust-writes` | Import ohne Bestätigungsdialog, nur für Clients ohne Dialog-Unterstützung |
+| `--confirm-writes` | vor jedem Import und vor dem ersten `WriteBlockSource` einen Bestätigungsdialog zeigen (Standard: aus) |
+| `--trust-writes` | veraltet, ohne Wirkung (Schreiben braucht standardmäßig keine Bestätigung mehr) |
 | `--project-path <datei>` | Rückfall-Projekt, falls in TIA keines offen ist |
 | `--with-dependencies` | `GetSourceBlock`/`GetSourceType` liefern Abhängigkeiten mit |
 | `--logging <1\|2\|3>` | 1 = stderr, 2 = Debug-Ausgabe, 3 = Windows-Ereignisanzeige |

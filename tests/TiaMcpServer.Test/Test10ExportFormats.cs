@@ -373,7 +373,37 @@ namespace TiaMcpServer.Test
             // Assert
             Assert.IsFalse(result.Created);
             Assert.AreEqual(ExportFormats.Defaults.Count, result.AddedFormats.Count);
-            Assert.AreEqual(SimaticSd, ExportFormatSettings.Load(_directory).Get("code-blocks-LAD"));
+            Assert.AreEqual(Default("code-blocks-LAD"), ExportFormatSettings.Load(_directory).Get("code-blocks-LAD"));
+        }
+
+        private static string Default(string key) => ExportFormats.Defaults.Single(d => d.Key == key).Value;
+
+        [TestMethod]
+        [DataRow(20, ".xml", ".scl", ".db", ".udt")]
+        [DataRow(21, SimaticSd, SimaticSd, SimaticSd, SimaticSd)]
+        [DataRow(0, SimaticSd, SimaticSd, SimaticSd, SimaticSd)]
+        public void Test_1086_Defaults_FollowTheTiaPortalVersion(int version, string lad, string scl, string db, string udt)
+        {
+            // Arrange: V20 cannot export SCL blocks as SIMATIC SD documents, so its defaults are XML and sources
+            var previous = Engineering.TiaMajorVersion;
+            Engineering.TiaMajorVersion = version;
+
+            try
+            {
+                // Act / Assert
+                Assert.AreEqual(lad, Default("code-blocks-LAD"));
+                Assert.AreEqual(scl, Default("code-blocks-SCL"));
+                Assert.AreEqual(db, Default("data-blocks"));
+                Assert.AreEqual(udt, Default("plc-data-types"));
+                Assert.AreEqual(ExportFormats.DefaultsV21.Count, ExportFormats.Defaults.Count, "both versions write the same keys");
+                CollectionAssert.AreEqual(
+                    ExportFormats.DefaultsV21.Select(d => d.Key).ToList(),
+                    ExportFormats.Defaults.Select(d => d.Key).ToList());
+            }
+            finally
+            {
+                Engineering.TiaMajorVersion = previous;
+            }
         }
 
         [TestMethod]
@@ -407,7 +437,7 @@ namespace TiaMcpServer.Test
             StringAssert.Contains(settings.Hint, file);
             StringAssert.Contains(settings.Hint, "check");
             Assert.AreEqual(".awl", settings.Get("code-blocks-STL"));
-            Assert.AreEqual(SimaticSd, settings.Get("plc-data-types"));
+            Assert.AreEqual(Default("plc-data-types"), settings.Get("plc-data-types"));
             Assert.AreEqual(ExportFormats.Defaults.Count, settings.Values.Count);
         }
 

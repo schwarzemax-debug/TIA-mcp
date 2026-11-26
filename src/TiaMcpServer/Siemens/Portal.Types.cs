@@ -138,10 +138,11 @@ namespace TiaMcpServer.Siemens
                     throw new PortalException(PortalErrorCode.NotFound, "Type not found");
                 }
 
-                // TIA Portal never exports inconsistent types
-                if (!type.IsConsistent)
+                // TIA Portal never exports inconsistent types: compile once first.
+                if (!IsConsistentAfterCompile(type))
                 {
-                    throw new PortalException(PortalErrorCode.InvalidState, "Type is inconsistent; TIA Portal does not export inconsistent types.");
+                    throw new PortalException(PortalErrorCode.InvalidState,
+                        $"Type '{type.Name}' is inconsistent and does not compile; TIA Portal does not export inconsistent types. 'CompilePlcSoftware' shows the compiler messages.");
                 }
 
                 exportPath = ResolveSoftwareRoot(exportPath, softwarePath);

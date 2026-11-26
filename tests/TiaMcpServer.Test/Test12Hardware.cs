@@ -149,11 +149,13 @@ namespace TiaMcpServer.Test
         }
 
         [TestMethod]
-        public async Task Test_1206_RealImport_WithoutConfirmationDialog_IsRefused()
+        public async Task Test_1206_RealImport_WithConfirmWrites_AndNoDialog_IsRefused()
         {
-            // Arrange
+            // Arrange: the operator asked for confirmation dialogs ('--confirm-writes')
             var previous = WritePolicy.AllowWrite;
+            var previousOptions = CliOptions.Current;
             WritePolicy.AllowWrite = true;
+            CliOptions.Current = new CliOptions { ConfirmWrites = true };
 
             try
             {
@@ -162,11 +164,38 @@ namespace TiaMcpServer.Test
                 var import = await Assert.ThrowsExactlyAsync<McpException>(() => McpServer.ImportHardware(null!, "sw", "dir", dryRun: false));
 
                 StringAssert.Contains(push.Message, McpServer.ImportConfirmation);
+                StringAssert.Contains(push.Message, "--confirm-writes");
                 StringAssert.Contains(import.Message, McpServer.ImportConfirmation);
             }
             finally
             {
                 WritePolicy.AllowWrite = previous;
+                CliOptions.Current = previousOptions;
+            }
+        }
+
+        [TestMethod]
+        public async Task Test_1206b_RealImport_WithoutConfirmWrites_AsksNobody()
+        {
+            // Arrange: the default - no '--confirm-writes'
+            var previous = WritePolicy.AllowWrite;
+            var previousOptions = CliOptions.Current;
+            WritePolicy.AllowWrite = true;
+            CliOptions.Current = new CliOptions();
+
+            try
+            {
+                // Act: no client, no dialog. The import goes straight to TIA Portal and fails there
+                // (no project open in the test), not at a confirmation step.
+                var push = await Assert.ThrowsExactlyAsync<McpException>(() => McpServer.TiaPushHardware(null!, "sw", "dir"));
+
+                // Assert
+                Assert.IsFalse(push.Message.Contains(McpServer.ImportConfirmation), push.Message);
+            }
+            finally
+            {
+                WritePolicy.AllowWrite = previous;
+                CliOptions.Current = previousOptions;
             }
         }
 
@@ -218,7 +247,8 @@ namespace TiaMcpServer.Test
             }
 
             StringAssert.Contains(bodies["ImportHardware"], "- dryRun: true");
-            StringAssert.Contains(bodies["TiaPushHardware"], "Yes, import");
+            StringAssert.Contains(bodies["TiaPushHardware"], "There is no confirmation question");
+            StringAssert.Contains(bodies["TiaPushHardware"], "--confirm-writes");
         }
     }
 }

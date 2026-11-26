@@ -61,6 +61,22 @@ namespace TiaMcpServer.Test
         }
 
         [TestMethod]
+        public void Test_802_ParseArgs_ConfirmWritesIsOptInAndTrustWritesIsAcceptedWithoutEffect()
+        {
+            // Act
+            var standard = CliOptions.ParseArgs(new[] { "--allow-write" });
+            var confirm = CliOptions.ParseArgs(new[] { "--allow-write", "--confirm-writes" });
+            var oldTrust = CliOptions.ParseArgs(new[] { "--allow-write", "--trust-writes", "true", "--software-path", "PLC_1" });
+
+            // Assert
+            Assert.IsFalse(standard.ConfirmWrites, "writes need no confirmation dialog by default");
+            Assert.IsTrue(confirm.ConfirmWrites);
+            Assert.IsFalse(oldTrust.ConfirmWrites);
+            Assert.IsTrue(oldTrust.UsedDeprecatedTrustWrites);
+            Assert.AreEqual("PLC_1", oldTrust.SoftwarePath, "the optional value of '--trust-writes' is consumed, the next option still parses");
+        }
+
+        [TestMethod]
         [DataRow("--preserve-path")]
         [DataRow("-preserve-path")]
         public void Test_816_ParseArgs_TheDeprecatedPreservePathStillTurnsKeepStructureOn(string oldName)

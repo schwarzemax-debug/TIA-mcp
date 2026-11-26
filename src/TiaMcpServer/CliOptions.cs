@@ -8,7 +8,8 @@ namespace TiaMcpServer
         public int? Logging { get; set; } // "stdio" or "http"
         public bool Doctor { get; set; } // print environment diagnostics and exit
         public bool AllowWrite { get; set; } // register the project-mutating tools
-        public bool TrustWrites { get; set; } // WriteBlockSource needs no confirmation dialog (for clients without elicitation)
+        public bool ConfirmWrites { get; set; } // opt-in: imports and WriteBlockSource ask the user in a dialog of the client (MCP elicitation)
+        public bool UsedDeprecatedTrustWrites { get; set; } // '--trust-writes' was given; writes need no confirmation by default now
         public string? ProjectPath { get; set; } // preset for the 'path' tool argument (project file)
         public string? SoftwarePath { get; set; } // preset for the 'softwarePath' tool argument
         public string? ExportPath { get; set; } // preset for the 'exportPath' tool argument
@@ -46,9 +47,17 @@ namespace TiaMcpServer
                         options.AllowWrite = true;
                         break;
 
+                    case "-confirm-writes":
+                    case "--confirm-writes":
+                        options.ConfirmWrites = ReadFlag(args, ref i);
+                        break;
+
+                    // Deprecated and without effect: writes run without a confirmation dialog unless
+                    // '--confirm-writes' is given. Still accepted so existing configurations keep working.
                     case "-trust-writes":
                     case "--trust-writes":
-                        options.TrustWrites = ReadFlag(args, ref i);
+                        ReadFlag(args, ref i);
+                        options.UsedDeprecatedTrustWrites = true;
                         break;
 
                     case "-project-path":
@@ -132,7 +141,8 @@ namespace TiaMcpServer
                 new("--logging", Logging?.ToString() ?? notSet),
                 new("--doctor", Doctor ? "true" : "false"),
                 new("--allow-write", AllowWrite ? "true" : "false"),
-                new("--trust-writes", TrustWrites ? "true" : "false"),
+                new("--confirm-writes", ConfirmWrites ? "true" : "false"),
+                new("--trust-writes (deprecated, writes need no confirmation by default)", UsedDeprecatedTrustWrites ? "used" : "not used"),
                 new("--preserve-path (deprecated, use --keep-structure)", UsedDeprecatedPreservePath ? "used" : "not used"),
                 new("--force-presets (deprecated, presets are always binding)", UsedDeprecatedForcePresets ? "used" : "not used")
             };

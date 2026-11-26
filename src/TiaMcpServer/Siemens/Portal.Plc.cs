@@ -10,6 +10,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
 using TiaMcpServer.Git;
 
 namespace TiaMcpServer.Siemens
@@ -170,7 +171,7 @@ namespace TiaMcpServer.Siemens
                     {
                         var blockPath = GetBlockPath(block);
 
-                        if (!Skip(result, "block", blockPath, block.IsConsistent, block.IsKnowHowProtected))
+                        if (!Skip(result, "block", blockPath, IsConsistentAfterCompile(block), block.IsKnowHowProtected))
                         {
                             TryGenerate(result, "block", blockPath, () => ExportBlockXml(block, blockPath, exportPath));
                         }
@@ -180,7 +181,7 @@ namespace TiaMcpServer.Siemens
                     {
                         var blockPath = GetBlockPath(block);
 
-                        if (!Skip(result, "block", blockPath, block.IsConsistent, block.IsKnowHowProtected))
+                        if (!Skip(result, "block", blockPath, IsConsistentAfterCompile(block), block.IsKnowHowProtected))
                         {
                             TryGenerate(result, "block", blockPath, () => ExportBlockDocumentOrMixed(settings, block, blockPath, exportPath, result));
                         }
@@ -390,7 +391,7 @@ namespace TiaMcpServer.Siemens
             {
                 var typePath = GetTypePath(type);
 
-                if (Skip(result, "type", typePath, type.IsConsistent, type.IsKnowHowProtected))
+                if (Skip(result, "type", typePath, IsConsistentAfterCompile(type), type.IsKnowHowProtected))
                 {
                     continue;
                 }
@@ -868,10 +869,19 @@ namespace TiaMcpServer.Siemens
                 return result;
             }
 
-            var rounds = PlcProgram.RunRounds(ordered, file => result.Items.AddRange(ImportProgramFile(softwarePath, file, option)));
+            // One TIA transaction per file, not one for the whole call: Openness refuses to commit
+            // a transaction after any exception inside it ("Commit of a Transaction is not allowed
+            // after an exception is thrown"), so a single failing file used to roll back every
+            // other file and hide its own reason behind that commit error. Per file, a failure
+            // rolls back just that file, its reason ends up in 'Failures', and the next round can
+            // retry it in a fresh transaction.
+            var notes = new List<string>();
+            var rounds = PlcProgram.RunRounds(ordered, file =>
+                result.Items.AddRange(InStep($"MCP: import {file.Display}", () => ImportProgramFile(softwarePath, file, option, notes))));
 
             result.Rounds = rounds.Rounds;
             result.Failures.AddRange(rounds.Failed.Select(f => $"{f.Item.Display}: {f.Error}"));
+            result.Notes.AddRange(notes.Distinct());
 
             _logger?.LogInformation(
                 "PLC program imported from '{Directory}' into '{Software}': {Imported} object(s) in {Rounds} round(s), {Failed} failed",
@@ -1001,7 +1011,66 @@ namespace TiaMcpServer.Siemens
                 .ToList();
         }
 
-        private List<ImportedProgramItem> ImportProgramFile(string softwarePath, ProgramFile file, GenerateBlockOption option)
+        /// <summary>
+        /// Imports one SimaticML file the way 'WriteBlockSource' does: unconnected pins of calls and
+        /// EN boxes in FBD networks are completed first (TIA Portal refuses the file otherwise).
+        /// The file in the export folder is left as it is; a completed copy is imported from a
+        /// fresh temp directory, which is removed again in every case.
+        /// </summary>
+        private IList<PlcBlock> ImportCompletedXmlFile(string softwarePath, ProgramFile file, List<string> notes)
+        {
+            var original = File.ReadAllText(file.File);
+            var added = new List<string>();
+            var completed = SimaticMlNormalizer.CompleteOpenPins(original, added);
+
+            if (ReferenceEquals(completed, original) || added.Count == 0)
+            {
+                return ImportBlocksFromXmlFile(softwarePath, file.GroupPath, file.File);
+            }
+
+            var directory = Path.Combine(Path.GetTempPath(), "TiaMcpPush_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(directory);
+
+            try
+            {
+                var copy = Path.Combine(directory, Path.GetFileName(file.File));
+
+                // The text carries its own XML declaration, so no BOM.
+                File.WriteAllText(copy, completed, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+                IList<PlcBlock> blocks;
+
+                try
+                {
+                    blocks = ImportBlocksFromXmlFile(softwarePath, file.GroupPath, copy);
+                }
+                catch (PortalException pex)
+                {
+                    // Name the caller's file, not the temp copy; TIA's line numbers can be off by
+                    // the wires that were added.
+                    throw new PortalException(pex.Code,
+                        pex.Message.Replace(copy, file.File) + $" (Imported from a copy with completed FBD pins: {string.Join(" ", added)})",
+                        null, pex);
+                }
+
+                notes.AddRange(added.Select(a => $"{file.Display}: {a}"));
+
+                return blocks;
+            }
+            finally
+            {
+                try
+                {
+                    Directory.Delete(directory, recursive: true);
+                }
+                catch (Exception ex)
+                {
+                    _logger?.LogWarning(ex, "Could not remove temp directory '{Directory}'", directory);
+                }
+            }
+        }
+
+        private List<ImportedProgramItem> ImportProgramFile(string softwarePath, ProgramFile file, GenerateBlockOption option, List<string> notes)
         {
             if (file.Kind == ProgramFileKind.DocumentBlock || file.Kind == ProgramFileKind.DocumentType)
             {
@@ -1010,7 +1079,7 @@ namespace TiaMcpServer.Siemens
 
             if (file.Kind == ProgramFileKind.XmlBlock)
             {
-                return ImportBlocksFromXmlFile(softwarePath, file.GroupPath, file.File)
+                return ImportCompletedXmlFile(softwarePath, file, notes)
                     .Select(b => new ImportedProgramItem { Name = b.Name, Path = GetBlockPath(b), Kind = "block", Format = "xml" })
                     .ToList();
             }
@@ -1091,6 +1160,9 @@ namespace TiaMcpServer.Siemens
 
         /// <summary>Files that look like part of the tree but are not imported, with the reason.</summary>
         public List<string> Ignored { get; set; } = new List<string>();
+
+        /// <summary>What was completed in .xml files before the import (FBD pins added as open connections), per file.</summary>
+        public List<string> Notes { get; set; } = new List<string>();
 
         /// <summary>How many passes over the pending files were made.</summary>
         public int Rounds { get; set; }

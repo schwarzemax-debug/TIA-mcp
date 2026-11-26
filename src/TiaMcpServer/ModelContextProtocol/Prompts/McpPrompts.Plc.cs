@@ -194,11 +194,11 @@ Use the ExportForceTable tool with these parameters:
 
 Overwrite the whole program of one PLC software in one call with the files of a folder, the counterpart to ExportPlcProgram (requires the server started with '--allow-write').
 
-Blocks and PLC data types of the same name in the open project are REPLACED by the file content. Always preview first:
-1. Call the tool with dryRun true. Nothing is imported; 'Planned' lists every object with 'create' or 'overwrite'
-2. Show the list to the user, name the objects that would be overwritten, and ask whether to import
-3. Only after the user agrees, call the tool again with dryRun false. The server then opens a confirmation dialog in which the user has to tick 'Yes, import' and press Submit; do not answer it for the user. Without that answer nothing is imported, and a client without such dialogs cannot run the import
-4. Do not save on your own. Tell the user the change is only in memory and ask whether to save; call SaveProject (or SaveSession in a local session) only after the user explicitly says 'save project'
+Blocks and PLC data types of the same name in the open project are REPLACED by the file content. There is no confirmation question: the change is only in memory and each file is one undo step in TIA Portal.
+1. To see the list first, call the tool with dryRun true. Nothing is imported; 'Planned' lists every object with 'create' or 'overwrite'
+2. To import, call the tool with dryRun false; do not ask in the chat first. Only a server started with '--confirm-writes' shows the user a confirmation dialog, which the user answers
+3. A file that fails is rolled back alone and listed in 'Failures' with TIA Portal's own reason; fix it and import it again
+4. Do not save on your own. Tell the user the change is only in memory; do not ask after every step whether to save. Call SaveProject (or SaveSession in a local session) only when the user explicitly says 'save project'
 
 What happens:
 - .udt files become PLC data types; .db, .awl and .scl files are compiled as sources; .xml files below the 'Program blocks' folder are imported as blocks (LAD); .s7dcl files (SIMATIC SD documents, with their .s7res) below the 'Program blocks' or 'PLC data types' folder are imported as blocks or PLC data types
@@ -229,10 +229,10 @@ Use the OverwritePlcProgram tool with these parameters:
 
 Overwrite objects of one PLC software with only the files of an export folder that git reports as changed since the last commit: modified, staged and new files (requires the server started with '--allow-write', git on PATH and an export folder inside a git repository).
 
-Blocks and PLC data types of the same name in the open project are REPLACED by the file content. The server asks the user itself, so do not ask in the chat first:
-1. Call the tool with dryRun false. The server then opens a dialog that lists every file to import and has a 'Yes, import' checkbox and a Submit button; do not answer it for the user. Nothing is imported unless the user ticks the box and submits, and a client without such dialogs cannot run the import
+Blocks and PLC data types of the same name in the open project are REPLACED by the file content. There is no confirmation question, so do not ask in the chat first:
+1. Call the tool with dryRun false. Each file is imported in its own transaction; a file that fails is rolled back alone and listed in 'Failures' with TIA Portal's own reason. Only a server started with '--confirm-writes' shows the user a confirmation dialog, which the user answers
 2. If the user only wants to see the list, call the tool with dryRun true instead: nothing is imported and 'Planned' lists every changed file with its object
-3. Do not save on your own. Tell the user the change is only in memory and ask whether to save; call SaveProject (or SaveSession in a local session) only after the user explicitly says 'save project'
+3. Do not save on your own. Tell the user the change is only in memory; do not ask after every step whether to save. Call SaveProject (or SaveSession in a local session) only when the user explicitly says 'save project'
 
 Typical flow: ExportPlcProgram into the git folder, commit the export as baseline, edit files, then this tool.
 
@@ -245,7 +245,7 @@ Common parameter values:
 - exportPath: folder that holds the tree ExportPlcProgram wrote and is a git working tree; changes are looked up below <exportPath>/<softwarePath>/
 - regexName: empty for all, or e.g. 'FB_.*' to select changed files by base name
 - keepOnError: Use false (default) to roll back a whole source file on any error, true to keep the objects of a file that were generated successfully
-- dryRun: false (default) opens the confirmation dialog and imports after the user ticks Yes, import; true only lists what would be imported
+- dryRun: false (default) imports right away; true only lists what would be imported
 
 Use the ImportPlcProgramChanges tool with these parameters:
 - softwarePath: {softwarePath}

@@ -89,11 +89,16 @@ namespace TiaMcpServer.Siemens
                         ?? throw new PortalException(PortalErrorCode.NotFound,
                             $"Block not found at '{blockPath}'. Use 'ResolveObjectPath' or 'GetBlocks' to find its path.");
 
+                    // A block that was just imported or whose callees changed is inconsistent, and
+                    // TIA Portal refuses to export it. Compile it once instead of sending the agent
+                    // away; only a block that does not compile stays unreadable.
+                    CompileIfInconsistent(block);
+
                     if (!block.IsConsistent)
                     {
                         throw new PortalException(PortalErrorCode.InvalidState,
-                            $"Block '{block.Name}' is inconsistent; TIA Portal cannot export it. Compile the software first, " +
-                            "or use 'GetBlockInterface', which works without an export.");
+                            $"Block '{block.Name}' is inconsistent and does not compile, so TIA Portal cannot export it. " +
+                            "'CompileCodeBlock' shows the compiler messages; 'GetBlockInterface' works without an export.");
                     }
 
                     return ReadSource(format, blockPath, block.Name, maxChars, export);
@@ -110,10 +115,10 @@ namespace TiaMcpServer.Siemens
                         ?? throw new PortalException(PortalErrorCode.NotFound,
                             $"PLC data type not found at '{typePath}'. Use 'ResolveObjectPath' or 'GetTypes' to find its path.");
 
-                    if (!type.IsConsistent)
+                    if (!IsConsistentAfterCompile(type))
                     {
                         throw new PortalException(PortalErrorCode.InvalidState,
-                            $"PLC data type '{type.Name}' is inconsistent; compile the software before reading its source.");
+                            $"PLC data type '{type.Name}' is inconsistent and does not compile; 'CompilePlcSoftware' shows the compiler messages.");
                     }
 
                     return ReadSource(format, typePath, type.Name, maxChars, export);
@@ -373,7 +378,7 @@ namespace TiaMcpServer.Siemens
                             "Use 'GetXmlBlock' for its SimaticML (LAD/FBD/GRAPH) instead; 'GetDocumentsBlock' needs TIA Portal V21 for LAD/FBD.");
                     }
 
-                    RequireGeneratable(block.IsConsistent, block.IsKnowHowProtected, "Block", block.Name);
+                    RequireGeneratable(IsConsistentAfterCompile(block), block.IsKnowHowProtected, "Block", block.Name);
 
                     return Generate(
                         group,
@@ -406,7 +411,7 @@ namespace TiaMcpServer.Siemens
                         ?? throw new PortalException(PortalErrorCode.NotFound,
                             $"PLC data type not found at '{typePath}'. Use 'ResolveObjectPath' or 'GetTypes' to find its path.");
 
-                    RequireGeneratable(type.IsConsistent, type.IsKnowHowProtected, "PLC data type", type.Name);
+                    RequireGeneratable(IsConsistentAfterCompile(type), type.IsKnowHowProtected, "PLC data type", type.Name);
 
                     return Generate(
                         group,
@@ -444,7 +449,7 @@ namespace TiaMcpServer.Siemens
                     continue;
                 }
 
-                if (Skip(result, "block", blockPath, block.IsConsistent, block.IsKnowHowProtected))
+                if (Skip(result, "block", blockPath, IsConsistentAfterCompile(block), block.IsKnowHowProtected))
                 {
                     continue;
                 }
@@ -477,7 +482,7 @@ namespace TiaMcpServer.Siemens
             {
                 var typePath = GetTypePath(type);
 
-                if (Skip(result, "type", typePath, type.IsConsistent, type.IsKnowHowProtected))
+                if (Skip(result, "type", typePath, IsConsistentAfterCompile(type), type.IsKnowHowProtected))
                 {
                     continue;
                 }

@@ -163,14 +163,14 @@ namespace TiaMcpServer.ModelContextProtocol
 
         [WriteTool]
         [McpServerTool(Name = "OverwritePlcProgram", Title = "Overwrite PLC program", Destructive = true, OpenWorld = false, UseStructuredContent = true),
-         Description("Use this ONLY when the user explicitly wants the WHOLE program of a PLC software in TIA Portal replaced by the files of a folder (first import into a project, restore, a folder without git); it is the counterpart to 'ExportPlcProgram'. For a request to import, preview or apply modified, changed or edited files use 'ImportPlcProgramChanges' instead. Blocks and PLC data types of the same name in the open project are REPLACED by the file content; everything in the folder is taken, changed or not. .udt files become PLC data types, .db, .awl and .scl files are compiled as sources, and .xml files below the 'Program blocks' folder are imported as blocks (LAD), and .s7dcl files (SIMATIC SD documents, with their .s7res) below the 'Program blocks' or 'PLC data types' folder as blocks (TIA Portal V20 or newer) or PLC data types (V21 or newer). Each file goes into the block or PLC data type group its folder path implies; a group that does not exist makes that file fail instead of being created. By default 'dryRun' is true: nothing is imported and 'Planned' lists every object with 'create' or 'overwrite'. Show that list to the user and call again with dryRun=false only after the user agrees. The server then asks the user itself to confirm by ticking the 'Yes, import' checkbox in a dialog of the client and imports nothing without it, so do not answer for the user; a client without such dialogs cannot run a real import. Never save on your own: after a real import tell the user the change is only in memory, and call SaveProject (SaveSession in a local session) only after the user explicitly says 'save project'. Files are imported in rounds: an object that needs another one (a LAD block calling an SCL block, an instance data block) is retried until nothing more can be imported; 'Rounds' says how many passes were made and 'Failures' lists what never succeeded. Other files, and .xml files outside the 'Program blocks' folder, are listed in 'Ignored'. To import only the files that changed since the last git commit use 'ImportPlcProgramChanges'")]
+         Description("Use this ONLY when the user explicitly wants the WHOLE program of a PLC software in TIA Portal replaced by the files of a folder (first import into a project, restore, a folder without git); it is the counterpart to 'ExportPlcProgram'. For a request to import, preview or apply modified, changed or edited files use 'ImportPlcProgramChanges' instead. Blocks and PLC data types of the same name in the open project are REPLACED by the file content; everything in the folder is taken, changed or not. .udt files become PLC data types, .db, .awl and .scl files are compiled as sources, and .xml files below the 'Program blocks' folder are imported as blocks (LAD), and .s7dcl files (SIMATIC SD documents, with their .s7res) below the 'Program blocks' or 'PLC data types' folder as blocks (TIA Portal V20 or newer) or PLC data types (V21 or newer). Each file goes into the block or PLC data type group its folder path implies; a group that does not exist makes that file fail instead of being created. By default 'dryRun' is true: nothing is imported and 'Planned' lists every object with 'create' or 'overwrite'. With dryRun=false the files are imported right away, without a confirmation question: the change is only in memory and each file is one undo step in TIA Portal (only when the operator started the server with '--confirm-writes' does the client show a confirmation dialog, which the user answers). Never save on your own: after a real import tell the user the change is only in memory, and call SaveProject (SaveSession in a local session) only after the user explicitly says 'save project'. Files are imported in rounds: an object that needs another one (a LAD block calling an SCL block, an instance data block) is retried until nothing more can be imported; 'Rounds' says how many passes were made and 'Failures' lists what never succeeded, each with TIA Portal's own reason; files that succeeded stay imported. FBD networks in .xml files get unconnected pins of calls and EN boxes completed as in 'WriteBlockSource' ('Notes' says so). Other files, and .xml files outside the 'Program blocks' folder, are listed in 'Ignored'. To import only the files that changed since the last git commit use 'ImportPlcProgramChanges'")]
         public static Task<ResponseImportedProgram> OverwritePlcProgram(
             SdkMcpServer server,
             [Description("softwarePath: defines the path in the project structure to the PLC software")] string softwarePath,
             [Description("importPath: directory on this machine that holds the tree ExportPlcProgram wrote; read recursively from <importPath>/<softwarePath>/")] string importPath,
             [Description("regexName: optional regular expression, imports only files whose base name matches. Empty means all")] string regexName = "",
             [Description("keepOnError: applies to source files only: keep the objects of a file that were generated successfully even when others in it fail. Default false, which rolls back a whole file on any error. XML files are never partial")] bool keepOnError = false,
-            [Description("dryRun: default true, only lists what would be imported and changes nothing. Set false to really overwrite, and only after the user has seen the dry run list and agreed; the server then asks the user to tick 'Yes, import' in a dialog")] bool dryRun = true,
+            [Description("dryRun: default true, only lists what would be imported and changes nothing. Set false to really overwrite; no confirmation question is needed")] bool dryRun = true,
             CancellationToken cancellationToken = default)
         {
             return ImportProgramAsync(server, nameof(OverwritePlcProgram), softwarePath, importPath, keepOnError, dryRun,
@@ -180,14 +180,14 @@ namespace TiaMcpServer.ModelContextProtocol
 
         [WriteTool]
         [McpServerTool(Name = "ImportPlcProgramChanges", Title = "Import PLC program changes", Destructive = true, OpenWorld = false, UseStructuredContent = true),
-         Description("Use this by default to import edited files back into TIA Portal, for any request to import, preview or apply modified or changed files: it takes only the files of an export folder that git reports as changed since the last commit (modified, staged and new files). For the whole folder use 'OverwritePlcProgram'. Blocks and PLC data types of the same name in the open project are REPLACED. Typical flow: 'ExportPlcProgram' into a git repository, commit the export as baseline, edit files, then use this. The folder must lie in a git repository and git must be installed. Files git reports as deleted cannot be imported and are listed in 'Deleted'; files with an open merge conflict are listed in 'Ignored'. To import, call it with dryRun=false right away and do not ask in the chat first: the server then shows the user a dialog of the client that lists every file to import and has a 'Yes, import' checkbox, and imports nothing unless the user ticks it and submits, so do not answer for the user. Use dryRun=true (the default) only when the user wants just the list: nothing is imported and 'Planned' lists every object with 'create' or 'overwrite'. A client without such dialogs cannot run a real import; then use dryRun=true. Never save on your own: after a real import tell the user the change is only in memory, and call SaveProject (SaveSession in a local session) only after the user explicitly says 'save project'. Formats, groups, rounds, 'Failures' and 'Ignored' work as in 'OverwritePlcProgram'")]
+         Description("Use this by default to import edited files back into TIA Portal, for any request to import, preview or apply modified or changed files: it takes only the files of an export folder that git reports as changed since the last commit (modified, staged and new files). For the whole folder use 'OverwritePlcProgram'. Blocks and PLC data types of the same name in the open project are REPLACED. Typical flow: 'ExportPlcProgram' into a git repository, commit the export as baseline, edit files, then use this. The folder must lie in a git repository and git must be installed. Files git reports as deleted cannot be imported and are listed in 'Deleted'; files with an open merge conflict are listed in 'Ignored'. To import, call it with dryRun=false right away; there is no confirmation question (the change is only in memory and each file is one undo step in TIA Portal; only when the operator started the server with '--confirm-writes' does the client show a confirmation dialog, which the user answers). Use dryRun=true (the default) only when the user wants just the list: nothing is imported and 'Planned' lists every object with 'create' or 'overwrite'. Never save on your own: after a real import tell the user the change is only in memory, and call SaveProject (SaveSession in a local session) only after the user explicitly says 'save project'. Formats, groups, rounds, 'Failures' and 'Ignored' work as in 'OverwritePlcProgram'")]
         public static Task<ResponseImportedProgram> ImportPlcProgramChanges(
             SdkMcpServer server,
             [Description("softwarePath: defines the path in the project structure to the PLC software")] string softwarePath,
             [Description("exportPath: directory on this machine that holds the tree ExportPlcProgram wrote and that is a git working tree; changes are looked up below <exportPath>/<softwarePath>/")] string exportPath,
             [Description("regexName: optional regular expression, imports only changed files whose base name matches. Empty means all")] string regexName = "",
             [Description("keepOnError: applies to source files only: keep the objects of a file that were generated successfully even when others in it fail. Default false, which rolls back a whole file on any error. XML files are never partial")] bool keepOnError = false,
-            [Description("dryRun: default true, only lists what would be imported and changes nothing. Set false to import: the server then shows the user a dialog with every file to import and a 'Yes, import' checkbox, so do not ask in the chat first")] bool dryRun = true,
+            [Description("dryRun: default true, only lists what would be imported and changes nothing. Set false to import right away; no confirmation question is needed")] bool dryRun = true,
             CancellationToken cancellationToken = default)
         {
             return ImportProgramAsync(server, nameof(ImportPlcProgramChanges), softwarePath, exportPath, keepOnError, dryRun,
@@ -221,12 +221,12 @@ namespace TiaMcpServer.ModelContextProtocol
         }
 
         /// <summary>
-        /// A dry run is a plain call. A real import first shows the user what it would do, in a
-        /// confirmation dialog of the client (MCP elicitation), and runs only when the user ticks
-        /// <see cref="ImportConfirmation"/> and submits. The dialog opens before the exclusive-access
-        /// transaction starts, so TIA Portal is not held while the user thinks. A client without
-        /// elicitation is refused: without it nothing but the agent's own restraint would stand
-        /// between a prompt and a replaced program.
+        /// A dry run is a plain call. A real import runs right away: the change stays in memory
+        /// until the user saves, and every file is its own undo step in TIA Portal. Only when the
+        /// operator started the server with '--confirm-writes' does it first show the user what it
+        /// would do, in a confirmation dialog of the client (MCP elicitation), and run only when
+        /// the user ticks <see cref="ImportConfirmation"/> and submits. The dialog opens before the
+        /// exclusive access starts, so TIA Portal is not held while the user thinks.
         /// </summary>
         private static async Task<ResponseImportedProgram> ImportProgramAsync(
             SdkMcpServer server, string toolName, string softwarePath, string path, bool keepOnError, bool dryRun,
@@ -237,12 +237,12 @@ namespace TiaMcpServer.ModelContextProtocol
                 return Guarded(toolName, () => ImportedProgram(run(true), path, keepOnError));
             }
 
-            if (server.ClientCapabilities?.Elicitation == null)
+            if (!CliOptions.Current.ConfirmWrites)
             {
-                throw new McpException(
-                    $"'{toolName}' with dryRun=false is refused: this client cannot show the confirmation dialog in which the user ticks '{ImportConfirmation}' and submits (MCP elicitation). " +
-                    "Use dryRun=true to preview, and run the import from a client that supports confirmation dialogs.");
+                return GuardedSteps(toolName, () => ImportedProgram(run(false), path, keepOnError));
             }
+
+            EnsureCanConfirm(server, toolName);
 
             var preview = Guarded(toolName, () => run(true));
 
@@ -260,7 +260,21 @@ namespace TiaMcpServer.ModelContextProtocol
                 return declined;
             }
 
-            return Guarded(toolName, () => ImportedProgram(run(false), path, keepOnError));
+            return GuardedSteps(toolName, () => ImportedProgram(run(false), path, keepOnError));
+        }
+
+        /// <summary>
+        /// Only with '--confirm-writes': refuses a client that cannot show the confirmation dialog,
+        /// because the operator asked for one.
+        /// </summary>
+        private static void EnsureCanConfirm(SdkMcpServer? server, string toolName)
+        {
+            if (server?.ClientCapabilities?.Elicitation == null)
+            {
+                throw new McpException(
+                    $"'{toolName}' is refused: the server runs with '--confirm-writes', but this client cannot show the confirmation dialog in which the user ticks '{ImportConfirmation}' (MCP elicitation). " +
+                    "Use a client with confirmation dialogs, or ask the person who configures the server to remove '--confirm-writes'.");
+            }
         }
 
         /// <summary>
@@ -373,6 +387,7 @@ namespace TiaMcpServer.ModelContextProtocol
                 }).ToList(),
                 Failures = result.Failures,
                 Ignored = result.Ignored,
+                Notes = result.Notes.Count > 0 ? result.Notes : null,
                 Deleted = result.Deleted,
                 Changed = result.Changed,
                 Rounds = result.Rounds,
@@ -380,8 +395,8 @@ namespace TiaMcpServer.ModelContextProtocol
                     ReportFormatter.Imported(result.Items.Count, result.Planned.Count, result.Rounds, result.Failures, result.Ignored, result.Deleted),
                     result.DryRun ? PlannedTable(result) : null),
                 Message = result.DryRun
-                    ? $"DRY RUN, nothing was imported: {result.Planned.Count} file(s) from '{path}' would be imported, {overwrites} of them overwrite existing objects, {result.Ignored.Count} ignored, {result.Deleted.Count} deleted. Show the 'Report' to the user as tables, unchanged. Call again with dryRun=false only after the user agrees; the server then asks the user to confirm by ticking the '{ImportConfirmation}' checkbox in a dialog of the client."
-                    : $"{result.Items.Count} object(s) imported from '{path}' in {result.Rounds} round(s), {result.Failures.Count} failed. Show the 'Report' to the user as tables, unchanged. The change is only in memory. Do not save on your own: ask the user, and call '{(Portal.IsLocalSession ? "SaveSession" : "SaveProject")}' only after the user explicitly says 'save project'.",
+                    ? $"DRY RUN, nothing was imported: {result.Planned.Count} file(s) from '{path}' would be imported, {overwrites} of them overwrite existing objects, {result.Ignored.Count} ignored, {result.Deleted.Count} deleted. Show the 'Report' to the user as tables, unchanged. Call again with dryRun=false to import; no confirmation question is needed."
+                    : $"{result.Items.Count} object(s) imported from '{path}' in {result.Rounds} round(s), {result.Failures.Count} failed.{(result.Failures.Count > 0 ? " 'Failures' has TIA Portal's reason per file; the files that succeeded stay imported. Fix the failed files and push them again." : string.Empty)} Show the 'Report' to the user as tables, unchanged. The change is only in memory. Do not save on your own: call '{(Portal.IsLocalSession ? "SaveSession" : "SaveProject")}' only after the user explicitly says 'save project'.",
                 Meta = new JsonObject
                 {
                     ["timestamp"] = DateTime.Now,

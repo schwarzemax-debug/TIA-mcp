@@ -27,6 +27,12 @@ namespace TiaMcpServer.Siemens
 
         public SemaphoreSlim Gate { get; } = new SemaphoreSlim(1, 1);
 
+        /// <summary>The tool that holds <see cref="Gate"/> right now, for the "busy" message of the next request.</summary>
+        public string? CurrentRequest { get; set; }
+
+        /// <summary>When the request in <see cref="CurrentRequest"/> got the gate.</summary>
+        public DateTime CurrentRequestStarted { get; set; }
+
         // written from the Openness thread that raises Disposed
         private volatile bool _isDisposed;
 

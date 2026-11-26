@@ -183,10 +183,13 @@ namespace TiaMcpServer.Siemens
                     exportPath = Path.Combine(exportPath, $"{FileNames.Safe(block.Name)}.xml");
                 }
 
-                // TIA Portal never exports inconsistent blocks
+                // TIA Portal never exports inconsistent blocks: compile once, as copy and move do.
+                CompileIfInconsistent(block);
+
                 if (!block.IsConsistent)
                 {
-                    throw new PortalException(PortalErrorCode.InvalidState, "Block is inconsistent; TIA Portal does not export inconsistent blocks.");
+                    throw new PortalException(PortalErrorCode.InvalidState,
+                        $"Block '{block.Name}' is inconsistent and does not compile; TIA Portal does not export inconsistent blocks. 'CompileCodeBlock' shows the compiler messages.");
                 }
 
                 Directory.CreateDirectory(Path.GetDirectoryName(exportPath)!);
@@ -700,6 +703,26 @@ namespace TiaMcpServer.Siemens
             }
         }
 
+        /// <summary>
+        /// For the export paths: an inconsistent block or type is compiled once, and the answer is
+        /// whether it is consistent now. Before, TiaPull and the read tools skipped such objects
+        /// ("inconsistent") although a compile was all they needed - typically right after an
+        /// import or after a called block changed.
+        /// </summary>
+        private bool IsConsistentAfterCompile(IEngineeringServiceProvider obj)
+        {
+            try
+            {
+                CompileIfInconsistent(obj);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogDebug(ex, "Compiling an inconsistent object before its export failed");
+            }
+
+            return obj is PlcBlock b ? b.IsConsistent : obj is PlcType t ? t.IsConsistent : true;
+        }
+
         private static void EnsureConsistent(PlcBlock block)
         {
             if (!block.IsConsistent)
@@ -979,10 +1002,10 @@ namespace TiaMcpServer.Siemens
                     {
                         // Openness has no interface accessor on code blocks: read the <Interface> of
                         // the SimaticML export instead (needs a consistent block).
-                        if (!block.IsConsistent)
+                        if (!IsConsistentAfterCompile(block))
                         {
                             throw new PortalException(PortalErrorCode.InvalidState,
-                                $"'{block.Name}' is inconsistent, so its interface cannot be exported. Compile it first ('CompileCodeBlock').");
+                                $"'{block.Name}' is inconsistent and does not compile, so its interface cannot be exported. 'CompileCodeBlock' shows the compiler messages.");
                         }
 
                         return ReadCodeBlockInterface(softwarePath, blockPath);

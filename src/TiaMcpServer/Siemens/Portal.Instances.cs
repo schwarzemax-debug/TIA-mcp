@@ -27,12 +27,15 @@ namespace TiaMcpServer.Siemens
 
         private readonly object _attachLock = new();
 
-        public static readonly TimeSpan DefaultGateTimeout = TimeSpan.FromSeconds(30);
+        // 30 s was shorter than an ordinary push or compile of a few blocks, so the next call of
+        // an agent failed with "busy" while the previous one was still doing honest work.
+        public static readonly TimeSpan DefaultGateTimeout = TimeSpan.FromSeconds(120);
 
         /// <summary>
         /// How long a request waits for another request on the same instance to finish. A
         /// modal dialog in TIA Portal can block an Openness call indefinitely; past this time
-        /// the waiting request fails with "busy" instead of hanging silently.
+        /// the waiting request fails with "busy" (naming the request it waited for) instead of
+        /// hanging silently.
         /// </summary>
         public TimeSpan GateTimeout { get; set; } = DefaultGateTimeout;
 
@@ -188,7 +191,8 @@ namespace TiaMcpServer.Siemens
         /// before the action runs, and the scope ends with the request - nothing carries over to
         /// the next one.
         /// </summary>
-        public async ValueTask<T> RunScopedAsync<T>(int? portalId, Func<ValueTask<T>> action, CancellationToken cancellationToken)
+        /// <param name="requestName">The tool name, shown to a request that has to wait for this one.</param>
+        public async ValueTask<T> RunScopedAsync<T>(int? portalId, Func<ValueTask<T>> action, CancellationToken cancellationToken, string? requestName = null)
         {
             var context = Resolve(portalId);
 
@@ -200,10 +204,19 @@ namespace TiaMcpServer.Siemens
 
             if (!await context.Gate.WaitAsync(GateTimeout, cancellationToken).ConfigureAwait(false))
             {
+                var holder = context.CurrentRequest;
+                var running = (DateTime.UtcNow - context.CurrentRequestStarted).TotalSeconds;
+
                 throw new PortalException(PortalErrorCode.InvalidState,
-                    $"TIA Portal instance {context.Id} has been busy with another request for more than " +
-                    $"{GateTimeout.TotalSeconds:0} s - possibly a dialog is waiting in TIA Portal. Close it or retry later.");
+                    holder != null
+                        ? $"TIA Portal instance {context.Id} is still working on '{holder}' (for {running:0} s); this request waited {GateTimeout.TotalSeconds:0} s. " +
+                          "Retry when it has finished. If it takes much longer, a dialog may be waiting in TIA Portal; close it."
+                        : $"TIA Portal instance {context.Id} has been busy with another request for more than " +
+                          $"{GateTimeout.TotalSeconds:0} s - possibly a dialog is waiting in TIA Portal. Close it or retry later.");
             }
+
+            context.CurrentRequest = requestName ?? "another request";
+            context.CurrentRequestStarted = DateTime.UtcNow;
 
             try
             {
@@ -221,6 +234,7 @@ namespace TiaMcpServer.Siemens
             finally
             {
                 _scoped.Value = null;
+                context.CurrentRequest = null;
                 context.Gate.Release();
             }
         }

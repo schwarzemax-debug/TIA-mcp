@@ -305,8 +305,10 @@ namespace TiaMcpServer.Test
                 // Assert
                 StringAssert.Contains(description, "REPLACED", name);
                 StringAssert.Contains(description, "dryRun", name);
-                StringAssert.Contains(description, "Yes, import", name);
+                StringAssert.Contains(description, "confirmation question", name);
+                StringAssert.Contains(description, "--confirm-writes", name);
                 StringAssert.Contains(description, "save project", name);
+                Assert.IsFalse(description.Contains("only after the user agrees"), $"{name}: the agent must not be told to ask before importing");
             }
         }
 
@@ -377,23 +379,26 @@ namespace TiaMcpServer.Test
 
             // Assert
             StringAssert.Contains(body, "dryRun true");
-            StringAssert.Contains(body, "Yes, import", "the import needs an explicit confirmation");
+            StringAssert.Contains(body, "There is no confirmation question", "the import runs without asking");
+            StringAssert.Contains(body, "do not ask in the chat first");
+            Assert.IsFalse(body.Contains("ask whether to import"), "the agent must not be told to ask before importing");
             StringAssert.Contains(body, "save project", "saving needs an explicit request, not an automatic call");
             StringAssert.Contains(body, "- dryRun: true", "replacing the whole program is previewed first unless asked otherwise");
         }
 
         [TestMethod]
-        public void Test_940_ImportChangesPrompt_GoesStraightToTheConfirmationDialog()
+        public void Test_940_ImportChangesPrompt_ImportsRightAway()
         {
             // Act
             var body = McpPrompts.ImportPlcProgramChanges("PLC_1", "C:\\export");
 
             // Assert
-            StringAssert.Contains(body, "dryRun false", "an import request opens the dialog right away");
+            StringAssert.Contains(body, "dryRun false", "an import request imports right away");
             StringAssert.Contains(body, "do not ask in the chat first");
-            StringAssert.Contains(body, "Yes, import", "the import needs an explicit confirmation");
+            StringAssert.Contains(body, "There is no confirmation question");
+            StringAssert.Contains(body, "own transaction", "a failing file must not take the others down");
             StringAssert.Contains(body, "save project", "saving needs an explicit request, not an automatic call");
-            StringAssert.Contains(body, "- dryRun: false", "the dialog is the preview and the confirmation");
+            StringAssert.Contains(body, "- dryRun: false", "an import request imports right away");
             StringAssert.Contains(McpPrompts.ImportPlcProgramChanges("PLC_1", "C:\\export", dryRun: "true"), "- dryRun: true", "a pure preview stays possible");
         }
     }

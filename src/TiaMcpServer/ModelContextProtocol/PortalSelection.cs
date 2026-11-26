@@ -107,7 +107,7 @@ namespace TiaMcpServer.ModelContextProtocol
 
                 try
                 {
-                    return await McpServer.Portal.RunScopedAsync(portalId, () => next(context, cancellationToken), cancellationToken);
+                    return await McpServer.Portal.RunScopedAsync(portalId, () => next(context, cancellationToken), cancellationToken, context.Params?.Name);
                 }
                 catch (PortalException pex)
                 {

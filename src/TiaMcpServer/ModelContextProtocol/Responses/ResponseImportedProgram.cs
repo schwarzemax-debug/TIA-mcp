@@ -32,6 +32,9 @@ namespace TiaMcpServer.ModelContextProtocol
         /// <summary>Files that look like part of the tree but are not imported, with the reason.</summary>
         public IEnumerable<string>? Ignored { get; set; }
 
+        /// <summary>What the server completed in .xml files before the import, e.g. unconnected pins of FBD calls added as open connections.</summary>
+        public IEnumerable<string>? Notes { get; set; }
+
         /// <summary>How many passes over the pending files were made; more than 1 means some objects waited for others.</summary>
         public int? Rounds { get; set; }
 

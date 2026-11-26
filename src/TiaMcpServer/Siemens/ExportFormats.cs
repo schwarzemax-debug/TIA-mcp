@@ -81,11 +81,40 @@ namespace TiaMcpServer.Siemens
 
 
         /// <summary>
-        /// The defaults TIA Portal offers for a new workspace (Options > Settings > Version control
-        /// interface > Export formats), written to a missing 'tia.json'. The values of the
-        /// user's installation may differ, which is why the file has to be checked.
+        /// The defaults written to a missing 'tia.json', for the TIA Portal version the server
+        /// runs against. The values of the user's installation may differ, which is why the file
+        /// has to be checked.
         /// </summary>
-        public static readonly IReadOnlyList<KeyValuePair<string, string>> Defaults = new[]
+        public static IReadOnlyList<KeyValuePair<string, string>> Defaults =>
+            Engineering.TiaMajorVersion > 0 && Engineering.TiaMajorVersion < 21 ? DefaultsV20 : DefaultsV21;
+
+        /// <summary>
+        /// TIA Portal V20: SimaticML and external sources. V20 exports SIMATIC SD documents only
+        /// for some LAD/FBD blocks and refuses SCL blocks ("The export or import of blocks with
+        /// mixed programming languages is not possible"), so with the V21 defaults a first pull
+        /// into a new folder silently lost every SCL block.
+        /// </summary>
+        public static readonly IReadOnlyList<KeyValuePair<string, string>> DefaultsV20 = new[]
+        {
+            new KeyValuePair<string, string>(LadBlocksKey, XmlText),
+            new KeyValuePair<string, string>(FbdBlocksKey, XmlText),
+            new KeyValuePair<string, string>(SclBlocksKey, SclText),
+            new KeyValuePair<string, string>(StlBlocksKey, AwlText),
+            new KeyValuePair<string, string>(LadStlBlocksKey, XmlText),
+            new KeyValuePair<string, string>(GraphBlocksKey, XmlText),
+            new KeyValuePair<string, string>(DataBlocksKey, DbText),
+            new KeyValuePair<string, string>(SafetyDataBlocksKey, XmlText),
+            new KeyValuePair<string, string>(PlcTypesKey, UdtText),
+            new KeyValuePair<string, string>(FCompliantPlcTypesKey, XmlText),
+            new KeyValuePair<string, string>(PlcTagTablesKey, XmlText),
+            new KeyValuePair<string, string>(TechnologyObjectsKey, XmlText)
+        };
+
+        /// <summary>
+        /// TIA Portal V21 and newer: the defaults it offers for a new workspace (Options > Settings >
+        /// Version control interface > Export formats).
+        /// </summary>
+        public static readonly IReadOnlyList<KeyValuePair<string, string>> DefaultsV21 = new[]
         {
             new KeyValuePair<string, string>(LadBlocksKey, SimaticSdText),
             new KeyValuePair<string, string>(FbdBlocksKey, SimaticSdText),

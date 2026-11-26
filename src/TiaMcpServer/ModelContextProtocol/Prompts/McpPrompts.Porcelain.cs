@@ -211,9 +211,9 @@ Use the TiaPullForceTable tool with these parameters:
         {
             return $@"Push the files of an export folder that git reports as changed (modified, staged and new) back into TIA Portal, like 'git push' sends local commits on. This is ImportPlcProgramChanges with dryRun false under a shorter name (requires the server started with '--allow-write', git on PATH and an export folder inside a git repository).
 
-Blocks and PLC data types of the same name in the open project are REPLACED by the file content. The server asks the user itself, so do not ask in the chat first:
-1. Call the tool. The server opens a dialog that lists every file to import and has a 'Yes, import' checkbox and a Submit button; do not answer it for the user. Nothing is imported unless the user ticks the box and submits, and a client without such dialogs cannot run the push; use TiaPushPreview there
-2. Do not save on your own. Tell the user the change is only in memory and ask whether to save; call SaveProject (or SaveSession in a local session) only after the user explicitly says 'save project'
+Blocks and PLC data types of the same name in the open project are REPLACED by the file content. There is no confirmation question, so do not ask in the chat first:
+1. Call the tool. Each file is imported in its own transaction; a file that fails is rolled back alone and listed in 'Failures' with TIA Portal's own reason, the others stay imported. FBD .xml files get unconnected pins of calls and EN boxes completed ('Notes'). Only a server started with '--confirm-writes' shows the user a confirmation dialog, which the user answers
+2. Do not save on your own. Tell the user the change is only in memory; do not ask after every step whether to save. Call SaveProject (or SaveSession in a local session) only when the user explicitly says 'save project'
 
 Typical flow: TiaPull into the git folder, commit the pull as baseline, edit files, then this tool.
 
@@ -269,9 +269,9 @@ Use the TiaPullHardware tool with these parameters:
         {
             return $@"Push the hardware configuration (AutomationML) file of a PLC device back into TIA Portal, like 'tia push hardware'. This is ImportHardware with dryRun false under a shorter name (requires the server started with '--allow-write').
 
-The server asks the user itself, so do not ask in the chat first:
-1. Call the tool. The server opens a dialog with a 'Yes, import' checkbox and a Submit button; do not answer it for the user. Nothing is imported unless the user ticks the box and submits, and a client without such dialogs cannot run the push
-2. Do not save on your own. Tell the user the change is only in memory and ask whether to save; call SaveProject (or SaveSession in a local session) only after the user explicitly says 'save project'
+There is no confirmation question, so do not ask in the chat first:
+1. Call the tool. Only a server started with '--confirm-writes' shows the user a confirmation dialog, which the user answers
+2. Do not save on your own. Tell the user the change is only in memory; do not ask after every step whether to save. Call SaveProject (or SaveSession in a local session) only when the user explicitly says 'save project'
 
 Common parameter values:
 - softwarePath: e.g. 'PLC_1' for hardware PLC

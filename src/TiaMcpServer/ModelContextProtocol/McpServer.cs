@@ -542,8 +542,13 @@ namespace TiaMcpServer.ModelContextProtocol
                 }
                 catch (Exception ex) when (ex is not PortalException)
                 {
+                    // TIA Portal asks once per new server program in the dialog 'Openness access'
+                    // (often behind its main window); while it waits, or after it timed out, the
+                    // attach fails. Say so, with TIA Portal's own reason, instead of a bare "failed".
                     throw new McpException(
-                        "Failed to connect to TIA Portal. Run the 'Doctor' tool to check the installation and user group membership.", ex);
+                        $"Failed to connect to TIA Portal: {ImportErrors.Describe(ex)} " +
+                        "On the first call of a new server program TIA Portal shows the dialog 'Openness access' (often behind its main window): " +
+                        "ask the user to confirm it there, then call 'TiaConnect' again. Otherwise run the 'Doctor' tool to check the installation and user group membership.", ex);
                 }
 
                 // Everything after attaching runs scoped to that instance and under its lock.
@@ -871,6 +876,29 @@ namespace TiaMcpServer.ModelContextProtocol
             {
                 // PortalException messages are already written for the caller (what went wrong
                 // and which tool lists the valid paths), so they pass through unchanged.
+                throw new McpException(pex.Message, pex);
+            }
+            catch (Exception ex) when (ex is not McpException)
+            {
+                throw new McpException($"Unexpected error in '{toolName}': {ex.Message}", ex);
+            }
+        }
+
+        /// <summary>
+        /// Like <see cref="Guarded{T}"/> for tools that import many files: exclusive access for the
+        /// whole call, but one transaction per file (Portal.InStep), so a failing file is rolled
+        /// back alone and reported with its own reason instead of poisoning the commit of all files.
+        /// </summary>
+        private static T GuardedSteps<T>(string toolName, Func<T> body)
+        {
+            WritePolicy.EnsureEnabled(toolName);
+
+            try
+            {
+                return Portal.InExclusiveAccess($"MCP: {toolName}", body);
+            }
+            catch (PortalException pex)
+            {
                 throw new McpException(pex.Message, pex);
             }
             catch (Exception ex) when (ex is not McpException)

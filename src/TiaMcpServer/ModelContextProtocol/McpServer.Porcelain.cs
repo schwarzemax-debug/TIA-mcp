@@ -40,7 +40,7 @@ namespace TiaMcpServer.ModelContextProtocol
         // folder into TIA Portal. The pull tools write the same tree as ExportPlcProgram, in the
         // formats of '<exportPath>/tia.json', so a pull of blocks and a pull of the whole program
         // land in the same folders. The push tools are the import tools with a different name,
-        // they confirm and preview exactly the same way.
+        // they preview (and, with '--confirm-writes', confirm) exactly the same way.
         //
         // Callers: the MCP host, through tool registration; the push tools only under
         // '--allow-write'. Affected API: none existing - the tools are new. File I/O: as
@@ -328,7 +328,7 @@ namespace TiaMcpServer.ModelContextProtocol
 
         [WriteTool]
         [McpServerTool(Name = "TiaPush",Title = "Tia push", Destructive = true, OpenWorld = false, UseStructuredContent = true),
-         Description("Use this when the user says 'tia push': put the files of the export folder that git reports as changed (modified, staged and new) back into TIA Portal, the way 'git push' sends the local commits on. It is 'ImportPlcProgramChanges' with dryRun=false, so blocks and PLC data types of the same name in the open project are REPLACED. Call it right away and do not ask in the chat first: the server shows the user a dialog of the client that lists every file and has a 'Yes, import' checkbox, and imports nothing unless the user ticks it and submits, so do not answer for the user. A client without such dialogs cannot run it; then use 'TiaPushPreview'. Never save on your own: after the push tell the user the change is only in memory, and call SaveProject (SaveSession in a local session) only after the user explicitly says 'save project'. The folder must lie in a git repository and git must be installed. Formats, rounds, 'Failures', 'Ignored' and 'Deleted' work as in 'ImportPlcProgramChanges'")]
+         Description("Use this when the user says 'tia push': put the files of the export folder that git reports as changed (modified, staged and new) back into TIA Portal, the way 'git push' sends the local commits on. It is 'ImportPlcProgramChanges' with dryRun=false, so blocks and PLC data types of the same name in the open project are REPLACED. Call it right away; there is no confirmation question (the change is only in memory, and each file is imported in its own transaction, one undo step in TIA Portal; only when the operator started the server with '--confirm-writes' does the client show a confirmation dialog, which the user answers). A file that fails is rolled back alone: 'Failures' has TIA Portal's own reason, the other files stay imported. FBD networks in .xml files get unconnected pins of calls and EN boxes completed as in 'WriteBlockSource' ('Notes' says so). Never save on your own: after the push tell the user the change is only in memory, and call SaveProject (SaveSession in a local session) only after the user explicitly says 'save project'. The folder must lie in a git repository and git must be installed. Formats, rounds, 'Failures', 'Ignored' and 'Deleted' work as in 'ImportPlcProgramChanges'")]
         public static Task<ResponseImportedProgram> TiaPush(
             SdkMcpServer server,
             [Description("softwarePath: defines the path in the project structure to the PLC software")] string softwarePath,
@@ -338,14 +338,6 @@ namespace TiaMcpServer.ModelContextProtocol
             CancellationToken cancellationToken = default)
         {
             WritePolicy.EnsureEnabled(nameof(TiaPush));
-
-            // ImportProgramAsync would say 'use dryRun=true', an argument this tool does not have.
-            if (server.ClientCapabilities?.Elicitation == null)
-            {
-                throw new McpException(
-                    $"'{nameof(TiaPush)}' is refused: this client cannot show the confirmation dialog in which the user ticks '{ImportConfirmation}' and submits (MCP elicitation). " +
-                    $"Use '{nameof(TiaPushPreview)}' to preview, and run the push from a client that supports confirmation dialogs.");
-            }
 
             return ImportProgramAsync(server, nameof(TiaPush), softwarePath, exportPath, keepOnError, dryRun: false,
                 preview => Portal.ImportPlcProgramChanges(softwarePath, exportPath, regexName, keepOnError, preview),
@@ -381,7 +373,7 @@ namespace TiaMcpServer.ModelContextProtocol
 
         [WriteTool]
         [McpServerTool(Name = "TiaPushHardware", Title = "Tia push hardware", Destructive = true, OpenWorld = false, UseStructuredContent = true),
-         Description("Use this when the user says 'tia push hardware': put the AutomationML file '<exportPath>/<softwarePath>/Hardware/<device name>.aml' of the export folder back into TIA Portal, so the hardware configuration of the device changes. It is 'ImportHardware' with dryRun=false. Call it right away and do not ask in the chat first: the server shows the user a dialog of the client with a 'Yes, import' checkbox and imports nothing unless the user ticks it and submits, so do not answer for the user; a client without such dialogs cannot run it. 'importOption' decides what happens to a device that exists: RetainTiaDevice (default), OverwriteTiaDevice or MoveToParkingLot. Never save on your own: after the push tell the user the change is only in memory, and call SaveProject (SaveSession in a local session) only after the user explicitly says 'save project'")]
+         Description("Use this when the user says 'tia push hardware': put the AutomationML file '<exportPath>/<softwarePath>/Hardware/<device name>.aml' of the export folder back into TIA Portal, so the hardware configuration of the device changes. It is 'ImportHardware' with dryRun=false. Call it right away; there is no confirmation question (only when the operator started the server with '--confirm-writes' does the client show a confirmation dialog, which the user answers). 'importOption' decides what happens to a device that exists: RetainTiaDevice (default), OverwriteTiaDevice or MoveToParkingLot. Never save on your own: after the push tell the user the change is only in memory, and call SaveProject (SaveSession in a local session) only after the user explicitly says 'save project'")]
         public static Task<ResponseHardwareTransfer> TiaPushHardware(
             SdkMcpServer server,
             [Description("softwarePath: defines the path in the project structure to the PLC software; its device receives the import")] string softwarePath,

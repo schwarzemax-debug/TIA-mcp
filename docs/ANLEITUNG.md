@@ -1,6 +1,6 @@
 # TIA Portal V20 MCP-Server – Anleitung für Agenten
 
-Stand: 2026-11-20, getestet gegen TIA Portal V20, Projekt `Projekt2` (S7-1500, `PLC_1`).
+Stand: 2026-11-26 (v0.4.1), getestet gegen TIA Portal V20, Projekte `Projekt1`/`Projekt2` (S7-1500, `PLC_1`).
 Änderungen dieses Stands: siehe `CHANGELOG.md`.
 
 ## 1. Was das ist
@@ -66,9 +66,19 @@ Der Server ist zustandsbehaftet: `Connect` und die Folgeaufrufe müssen in **der
   - `MoveBlock`/`MoveType` – funktionieren jetzt (Export → Löschen → Import, bei Fehler Rücksetzen); inkonsistente
     Quellen werden vorher automatisch übersetzt.
   - `RenameBlock`, `DeleteBlock`, `CreateBlockGroup`, `DeleteBlockGroup`.
-- Bestätigung: `WriteBlockSource` fragt einmal pro Sitzung per MCP-Dialog („Yes, import“). Der Agent beantwortet ihn nicht.
-  Clients ohne Dialog werden abgelehnt, außer der Server läuft mit `--trust-writes` (setzt nur der Betreiber).
+- **Keine Rückfragen** (seit v0.4.1): `WriteBlockSource`, `TiaPush`, `ImportPlcProgramChanges`, `OverwritePlcProgram`
+  und der Hardware-Import laufen ohne Bestätigungsdialog. Agent: **nicht im Chat nachfragen**, ob etwas überschrieben
+  werden darf, und nicht nach jedem Schritt fragen, ob gespeichert werden soll – nur nicht selbst speichern.
+  Nur wenn der Betreiber den Server mit `--confirm-writes` startet, zeigt der Client einen Dialog („Yes, import“);
+  den beantwortet der Nutzer. `--trust-writes` ist veraltet und ohne Wirkung.
+- Fragt der Client selbst bei jedem Tool-Aufruf nach (Copilot CLI, VS Code, Claude Code), ist das eine Einstellung des
+  Clients, siehe README „Freigaben im Client“.
 - Alles läuft in einer TIA-Transaktion: schlägt ein Schritt fehl, wird er komplett zurückgerollt.
+- Importe mehrerer Dateien (`TiaPush` …) haben **eine Transaktion pro Datei**: eine fehlerhafte Datei wird allein
+  zurückgerollt, `Failures` nennt die Ursache von TIA (z. B. „'IdentCon' does not exist at the object with UID '99'“),
+  die übrigen Dateien bleiben importiert. Fehlerhafte Datei korrigieren und erneut pushen.
+- FUP-XML über `TiaPush`/`OverwritePlcProgram`: offene Pins werden wie bei `WriteBlockSource` ergänzt (`Notes`);
+  die Datei im Export-Ordner bleibt unverändert.
 
 ### 4a. FUP (FBD) per SimaticML – Rezept
 
@@ -102,7 +112,8 @@ Rückgabewert, Vergleicher `>=`, SR-Flipflop, MOVE). Vorlage: `gen_fbd_main.ps1`
 - `RenameWatchTable` geht in V20 nicht (`PlcWatchTable.Name` schreibgeschützt).
 - `tia.json` im Export-Ordner steuert die Formate (XML/Quellformate, **nicht** SIMATIC SD).
 - Inkonsistente Bausteine lassen sich nicht exportieren → erst `CompilePlcSoftware`.
-- `ImportPlcProgramChanges` braucht git (nicht installiert) → `OverwritePlcProgram` oder `WriteBlockSource` verwenden.
+- `ImportPlcProgramChanges`/`TiaPush` brauchen git im PATH und einen Export-Ordner unter git (`git init`, `TiaPull`,
+  Commit als Basis); ohne git `OverwritePlcProgram` oder `WriteBlockSource` verwenden.
 - `PreviewImport` akzeptiert `block(s)`/`type(s)` und durchsucht den Exportbaum rekursiv (auch `.scl/.awl/.db/.udt`).
   Unterordner zählen als Zielgruppe (wie beim echten Import), der Systemordner (`Programmbausteine`) wird ignoriert.
 - `Doctor` erkennt jetzt V20.
@@ -113,10 +124,13 @@ Rückgabewert, Vergleicher `>=`, SR-Flipflop, MOVE). Vorlage: `gen_fbd_main.ps1`
 | Symptom | Ursache / Lösung |
 | --- | --- |
 | MCP „Connection closed“ beim Start | Smart App Control blockiert die EXE/DLL (Ereignisanzeige CodeIntegrity 3077). Siehe 5. |
-| `TiaConnect` hängt | Dialog „Openness Zugriff“ wartet in TIA (oft hinter dem Hauptfenster). |
+| `TiaConnect` hängt / „Failed to connect“ | Dialog „Openness Zugriff“ wartet in TIA (oft hinter dem Hauptfenster), einmal je neuem Server-Programm. Nutzer bestätigen lassen, dann `TiaConnect` wiederholen. |
 | `The connection with the name 'en' is not connected …` | Pin ohne Draht im FUP-XML. `WriteBlockSource` ergänzt Calls/EN-Boxen automatisch; sonst `<OpenCon>` setzen. |
 | `Missing 'Namespace' identifier attribute` | `<Namespace />` in der AttributeList des Bausteins fehlt. |
-| `Commit of a Transaction is not allowed after an exception` | Ein Openness-Fehler innerhalb einer Transaktion; die Änderung wurde zurückgerollt. Ursache in der Meldung davor. |
+| `Commit of a Transaction is not allowed after an exception` | Bis v0.4.0 bei `TiaPush`: eine fehlerhafte Datei verdarb den ganzen Push und versteckte die Ursache. Ab v0.4.1 behoben (Transaktion pro Datei, Ursache in `Failures`). Sonst: „TIA Portal refused to commit …“ – alles zurückgerollt, Ursache steht dahinter. |
+| `… busy with another request …` | Ein voriger Aufruf (Push, Übersetzen) läuft noch. Ab v0.4.1 wartet der nächste Aufruf bis 120 s und nennt das laufende Tool. |
+| `Block '…' is inconsistent` beim Lesen/Exportieren | Ab v0.4.1 übersetzen `GetXmlBlock`, `TiaPull` usw. den Baustein vorher selbst; die Meldung kommt nur noch, wenn er nicht übersetzbar ist (`CompileCodeBlock` zeigt warum). |
+| `TiaPull` in neuen Ordner liefert keine SCL-Bausteine | Bis v0.4.0 schrieb ein neues `tia.json` SIMATIC-SD-Formate, die V20 für SCL nicht kann. Ab v0.4.1 XML/Quelltext für V20; altes `tia.json` ggf. anpassen. |
 | `Block not found` | Voller Pfad nötig (`Gruppe/Untergruppe/Name`), `GetBlocks`/`ResolveObjectPath` zeigt ihn. |
 | Falsches Projekt geöffnet | `--project-path` ist nur Rückfall, wenn in TIA kein Projekt offen ist. `TiaConnect` ohne `projectpath` aufrufen. |
 

@@ -52,7 +52,7 @@ Use the ExportHardware tool with these parameters:
         {
             return $@"Import the hardware configuration (AutomationML) of the device that owns a PLC software from the .aml file ExportHardware wrote (requires the server started with '--allow-write').
 
-With dryRun true only the file is checked. With dryRun false the server asks the user itself: a dialog of the client has a 'Yes, import' checkbox and a Submit button; do not answer it for the user. Do not save on your own: tell the user the change is only in memory and call SaveProject (or SaveSession in a local session) only after the user explicitly says 'save project'.
+With dryRun true only the file is checked. With dryRun false the file is imported right away, without a confirmation question (only a server started with '--confirm-writes' shows the user a dialog, which the user answers). Do not save on your own: tell the user the change is only in memory and call SaveProject (or SaveSession in a local session) only after the user explicitly says 'save project'.
 
 Common parameter values:
 - softwarePath: e.g. 'PLC_1' for hardware PLC

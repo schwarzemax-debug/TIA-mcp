@@ -21,20 +21,20 @@ namespace TiaMcpServer.ModelContextProtocol
         // based imports (export folder, git, confirmation per import).
         //
         // Callers: the MCP host, only under '--allow-write'. Affected API: none existing - new tool.
-        // Project-mutating, so it asks the user once per server session (MCP elicitation) before
-        // the first write. A client without elicitation is refused unless the server runs with
-        // '--trust-writes', which only the person who configures the server can set.
+        // Project-mutating, but the change stays in memory until the user saves, so it runs
+        // without a question. Only when the person who configures the server sets
+        // '--confirm-writes' does it ask the user once per server session (MCP elicitation).
 
         #region write block source
 
         private static readonly object TrustLock = new object();
 
-        /// <summary>True once the user confirmed in this server session, or when started with --trust-writes.</summary>
+        /// <summary>True once the user confirmed in this server session, or always without --confirm-writes.</summary>
         private static bool _writeSourceTrusted;
 
         [WriteTool]
         [McpServerTool(Name = "WriteBlockSource", Title = "Write block source", Destructive = true, OpenWorld = false, UseStructuredContent = true),
-         Description("Use this to create or replace blocks and PLC data types directly from source text, in one call: the text is compiled into the project and, by default, the new blocks are compiled and their compiler messages returned. This is the way to build program parts as an agent: no export folder, no git. Send the COMPLETE source file content in 'sourceText'. The object name comes from the source itself (FUNCTION_BLOCK \"FB_Name\", FUNCTION \"FC_Name\", ORGANIZATION_BLOCK \"OB_Name\", DATA_BLOCK \"DB_Name\", TYPE \"UDT_Name\"), not from a parameter. 'format': 'scl' (SCL: OB, FB, FC, DB, UDT in SCL syntax; default), 'awl' (STL), 'db' (data block source), 'udt' (PLC data type, ends up under PLC data types). One call may contain several objects of the same kind. An object of the same name that already exists is REPLACED. A missing group in 'groupPath' is created. Order matters across calls: write a UDT before the FB that uses it, an FB before the OB or instance DB that calls it. After a compile with errors, read 'Messages', fix the text and call again with the corrected full text. LAD and FBD blocks (also replacing OB1 'Main'): use 'xml' with a SimaticML document - 'GetXmlBlock' of an existing block is the best template. TIA Portal V20: <Engineering version=\"V20\" />, interface namespace http://www.siemens.com/automation/Openness/SW/Interface/v5, network namespace http://www.siemens.com/automation/Openness/SW/NetworkSource/FlgNet/v4. Rules: ID attributes unique per document, UId unique per network; FBD has no <Powerrail>; operands as <Access Scope=\"GlobalVariable\"><Symbol><Component Name=\"Tag\" /></Symbol></Access>, constants as LiteralConstant (with ConstantType) or GlobalConstant; logic as <Part Name=\"A\"|\"O\"|\"Coil\"|\"Sr\"|\"Ge\" ...> with TemplateValue Card/SrcType, negated inputs as <Negated Name=\"in2\" />; block calls as <Call><CallInfo Name=\"FB_x\" BlockType=\"FB\"> with an <Instance> (instance DB must exist) and one <Parameter> per interface member. Unconnected EN/output pins of calls in FBD networks are completed automatically ('Notes' says so). The first call of a server session asks the user to confirm in a dialog of the client (tick 'Yes, import'); do not answer for the user. Never save on your own: the change is only in memory until the user explicitly says 'save project'")]
+         Description("Use this to create or replace blocks and PLC data types directly from source text, in one call: the text is compiled into the project and, by default, the new blocks are compiled and their compiler messages returned. This is the way to build program parts as an agent: no export folder, no git. Send the COMPLETE source file content in 'sourceText'. The object name comes from the source itself (FUNCTION_BLOCK \"FB_Name\", FUNCTION \"FC_Name\", ORGANIZATION_BLOCK \"OB_Name\", DATA_BLOCK \"DB_Name\", TYPE \"UDT_Name\"), not from a parameter. 'format': 'scl' (SCL: OB, FB, FC, DB, UDT in SCL syntax; default), 'awl' (STL), 'db' (data block source), 'udt' (PLC data type, ends up under PLC data types). One call may contain several objects of the same kind. An object of the same name that already exists is REPLACED. A missing group in 'groupPath' is created. Order matters across calls: write a UDT before the FB that uses it, an FB before the OB or instance DB that calls it. After a compile with errors, read 'Messages', fix the text and call again with the corrected full text. LAD and FBD blocks (also replacing OB1 'Main'): use 'xml' with a SimaticML document - 'GetXmlBlock' of an existing block is the best template. TIA Portal V20: <Engineering version=\"V20\" />, interface namespace http://www.siemens.com/automation/Openness/SW/Interface/v5, network namespace http://www.siemens.com/automation/Openness/SW/NetworkSource/FlgNet/v4. Rules: ID attributes unique per document, UId unique per network; FBD has no <Powerrail>; operands as <Access Scope=\"GlobalVariable\"><Symbol><Component Name=\"Tag\" /></Symbol></Access>, constants as LiteralConstant (with ConstantType) or GlobalConstant; logic as <Part Name=\"A\"|\"O\"|\"Coil\"|\"Sr\"|\"Ge\" ...> with TemplateValue Card/SrcType, negated inputs as <Negated Name=\"in2\" />; block calls as <Call><CallInfo Name=\"FB_x\" BlockType=\"FB\"> with an <Instance> (instance DB must exist) and one <Parameter> per interface member. Unconnected EN/output pins of calls in FBD networks are completed automatically ('Notes' says so). There is no confirmation question; do not ask in the chat before writing (only when the operator started the server with '--confirm-writes' does the first call show a dialog of the client, which the user answers). Never save on your own: the change is only in memory until the user explicitly says 'save project'")]
         public static async Task<ResponseWrittenSource> WriteBlockSource(
             SdkMcpServer server,
             [Description("softwarePath: defines the path in the project structure to the PLC software")] string softwarePath,
@@ -145,9 +145,9 @@ namespace TiaMcpServer.ModelContextProtocol
         }
 
         /// <summary>
-        /// Asks the user once per server session before the agent may write source text. Later
-        /// calls pass without a dialog. Refused, with the reason, when the client cannot ask and the
-        /// server was not started with '--trust-writes'.
+        /// Only with '--confirm-writes': asks the user once per server session before the agent may
+        /// write source text; later calls pass without a dialog. Refused, with the reason, when the
+        /// client cannot ask. Without the option every call passes.
         /// </summary>
         private static async Task EnsureWriteSourceTrustedAsync(
             SdkMcpServer server, string softwarePath, string groupPath, string format, string sourceText, CancellationToken cancellationToken)
@@ -159,20 +159,14 @@ namespace TiaMcpServer.ModelContextProtocol
                     return;
                 }
 
-                if (CliOptions.Current.TrustWrites)
+                if (!CliOptions.Current.ConfirmWrites)
                 {
                     _writeSourceTrusted = true;
                     return;
                 }
             }
 
-            if (server.ClientCapabilities?.Elicitation == null)
-            {
-                throw new McpException(
-                    "'WriteBlockSource' is refused: this client cannot show the confirmation dialog in which the user ticks " +
-                    $"'{ImportConfirmation}' (MCP elicitation). Use a client with confirmation dialogs, or ask the person who configures the " +
-                    "server to start it with '--trust-writes'.");
-            }
+            EnsureCanConfirm(server, nameof(WriteBlockSource));
 
             var preview = (sourceText ?? string.Empty).Split('\n').Take(12).Select(l => l.TrimEnd('\r'));
 
