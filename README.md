@@ -84,6 +84,9 @@ Was geändert wurde, steht in [CHANGELOG-V20.md](CHANGELOG-V20.md).
 - Änderungen liegen nur **im Speicher**, bis jemand `SaveProject` aufruft.
 - **Keine Rückfragen:** Schreib- und Import-Tools laufen ohne Bestätigungsdialog. Wer einen Dialog („Yes, import“)
   vor jedem Import will, startet den Server mit `--confirm-writes`.
+- **Argumente werden geprüft:** Ein unbekannter oder fehlender Parametername wird mit der Parameterliste des Tools
+  gemeldet („did you mean 'regexName'?“), das Tool läuft dann nicht. Ohne diese Prüfung ignoriert das MCP-SDK falsch
+  geschriebene Namen und meldet sonstige Fehler nur als „An error occurred invoking …“.
 - TIA selbst fragt bei jedem neuen Server-Programm nach dem **Openness-Zugriff**.
 
 **Freigaben im Client:** Fragt der Agent trotzdem bei jedem Tool-Aufruf nach, kommt die Frage vom Client, nicht vom

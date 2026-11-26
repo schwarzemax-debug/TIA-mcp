@@ -1,5 +1,23 @@
 ﻿# Changelog – TIA Portal V20 MCP-Server
 
+## 2026-11-26 – v0.4.2 (verständliche Fehler bei falschen Argumenten)
+
+Das MCP-SDK gibt den Text einer Exception nur weiter, wenn sie eine `McpException` ist. Alles andere wird zu
+„An error occurred invoking 'X'.“ – auch der Fehler des Parameter-Bindings bei einem fehlenden Pflichtargument. Ein
+**falsch geschriebener** Argumentname ist dort gar kein Fehler: Er wird ignoriert, das Tool läuft mit dem Standardwert
+(`TiaPush` mit `regex` statt `regexName` hätte alle geänderten Dateien importiert).
+
+- Neuer Filter `ArgumentCheck` vor allen Tool-Aufrufen (äußerster Call-Tool-Filter): prüft die Argumente gegen das
+  Eingabeschema, das der Client sieht. Unbekannte und fehlende Pflichtargumente werden gemeldet, mit der
+  Parameterliste und einem Hinweis auf den ähnlichsten Namen, z. B.
+  `'WhereUsed' was not called: unknown parameter(s) 'objectPath'; missing required parameter(s) 'name'. Its parameters are: name (required), kind, portalId.`
+  bzw. `unknown parameter(s) 'regex' (did you mean 'regexName'?)`. Das Tool läuft dann nicht.
+  Preset-Argumente (`softwarePath`, `exportPath` …) und `portalId` gelten weiter als bekannt.
+- Andere Exceptions (z. B. falscher Typ: `"dryRun": "vielleicht"`) kommen mit Typ und Meldung beim Agenten an statt
+  mit dem generischen Satz. SDK-eigene Fehler, Abbruch und `InputRequiredException` bleiben unverändert.
+- Tests: Unit-Tests 289/289 (9 neu in `Test14ArgumentCheck`, u. a. prüft einer, dass kein registriertes Tool ein
+  Argument seines eigenen Schemas abgewiesen bekommt). Über das MCP-Protokoll mit dem gebauten Server geprüft.
+
 ## 2026-11-26 – v0.4.1 (Push mit FUP, keine Rückfragen)
 
 Anlass: Ein Agent (GitHub Copilot CLI) scheiterte beim Aufbau eines FUP-`Main` an `TiaPush`: jeder Versuch endete mit

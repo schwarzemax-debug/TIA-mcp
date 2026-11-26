@@ -89,7 +89,8 @@ namespace TiaMcpServer
                 .GetMethods(BindingFlags.Public | BindingFlags.Static)
                 .Where(m => m.GetCustomAttribute<global::ModelContextProtocol.Server.McpServerToolAttribute>() != null)
                 .Where(m => allowWrite || m.GetCustomAttribute<WriteToolAttribute>() == null)
-                .Select(m => ToolDefaults.Apply(m, PortalSelection.Apply(m, global::ModelContextProtocol.Server.McpServerTool.Create(m))))
+                // ArgumentCheck last: it records the schema as the client finally sees it.
+                .Select(m => ArgumentCheck.Apply(m, ToolDefaults.Apply(m, PortalSelection.Apply(m, global::ModelContextProtocol.Server.McpServerTool.Create(m)))))
                 .ToList();
         }
 
@@ -166,6 +167,8 @@ namespace TiaMcpServer
                     .WithStdioServerTransport()
                     .WithRequestFilters(filters =>
                     {
+                        // First = outermost: sees the arguments as sent (with 'portalId') and every exception.
+                        filters.AddCallToolFilter(ArgumentCheck.Filter);
                         filters.AddCallToolFilter(PortalSelection.Filter);
                         filters.AddCallToolFilter(ToolDefaults.Filter);
                         filters.AddListToolsFilter(ToolOrdering.Filter);

@@ -1,6 +1,6 @@
 # TIA Portal V20 MCP-Server – Anleitung für Agenten
 
-Stand: 2026-11-26 (v0.4.1), getestet gegen TIA Portal V20, Projekte `Projekt1`/`Projekt2` (S7-1500, `PLC_1`).
+Stand: 2026-11-26 (v0.4.2), getestet gegen TIA Portal V20, Projekte `Projekt1`/`Projekt2` (S7-1500, `PLC_1`).
 Änderungen dieses Stands: siehe `CHANGELOG.md`.
 
 ## 1. Was das ist
@@ -128,6 +128,7 @@ Rückgabewert, Vergleicher `>=`, SR-Flipflop, MOVE). Vorlage: `gen_fbd_main.ps1`
 | `The connection with the name 'en' is not connected …` | Pin ohne Draht im FUP-XML. `WriteBlockSource` ergänzt Calls/EN-Boxen automatisch; sonst `<OpenCon>` setzen. |
 | `Missing 'Namespace' identifier attribute` | `<Namespace />` in der AttributeList des Bausteins fehlt. |
 | `Commit of a Transaction is not allowed after an exception` | Bis v0.4.0 bei `TiaPush`: eine fehlerhafte Datei verdarb den ganzen Push und versteckte die Ursache. Ab v0.4.1 behoben (Transaktion pro Datei, Ursache in `Failures`). Sonst: „TIA Portal refused to commit …“ – alles zurückgerollt, Ursache steht dahinter. |
+| `'X' was not called: unknown parameter(s) …` | Falscher Argumentname (ab v0.4.2 geprüft). Die Meldung nennt die gültigen Parameter und den ähnlichsten Namen; damit neu aufrufen. Vorher lief das Tool mit Standardwerten weiter bzw. kam nur „An error occurred invoking …“. |
 | `… busy with another request …` | Ein voriger Aufruf (Push, Übersetzen) läuft noch. Ab v0.4.1 wartet der nächste Aufruf bis 120 s und nennt das laufende Tool. |
 | `Block '…' is inconsistent` beim Lesen/Exportieren | Ab v0.4.1 übersetzen `GetXmlBlock`, `TiaPull` usw. den Baustein vorher selbst; die Meldung kommt nur noch, wenn er nicht übersetzbar ist (`CompileCodeBlock` zeigt warum). |
 | `TiaPull` in neuen Ordner liefert keine SCL-Bausteine | Bis v0.4.0 schrieb ein neues `tia.json` SIMATIC-SD-Formate, die V20 für SCL nicht kann. Ab v0.4.1 XML/Quelltext für V20; altes `tia.json` ggf. anpassen. |
